@@ -1,6 +1,6 @@
 from functools import cached_property
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     database_url: str = ""
+    database_url_unpooled: str = ""
     neon_auth_url: str = ""
     neon_auth_jwks_url: str = ""
     neon_storage_bucket: str = ""
@@ -28,11 +29,17 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     max_upload_mb: int = 100
 
-    @field_validator("database_url", mode="before")
+    @field_validator("database_url", "database_url_unpooled", mode="before")
     @classmethod
     def normalize_database_url(cls, value: str) -> str:
-        if value and value.startswith("postgresql://"):
-            return value.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if value:
+            parsed = urlsplit(value)
+            if parsed.scheme in {"postgres", "postgresql", "postgresql+asyncpg"}:
+                query = [("ssl" if key == "sslmode" else key, item)
+                         for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+                         if key != "channel_binding"]
+                return urlunsplit(("postgresql+asyncpg", parsed.netloc, parsed.path,
+                                   urlencode(query), parsed.fragment))
         return value
 
     @cached_property
@@ -61,11 +68,23 @@ class Settings(BaseSettings):
 
     @property
     def database_configured(self) -> bool:
-        if not self.database_url:
+        return self._valid_database_url(self.database_url)
+
+    @property
+    def migration_database_configured(self) -> bool:
+        return self._valid_database_url(self.database_url_unpooled, require_direct=True)
+
+    @staticmethod
+    def _valid_database_url(value: str, require_direct: bool = False) -> bool:
+        if not value:
             return False
-        parsed = urlsplit(self.database_url)
+        parsed = urlsplit(value)
+        if not parsed.scheme.startswith("postgresql"):
+            return False
         values = (parsed.username, parsed.password, parsed.hostname, parsed.path.strip("/"))
-        return all(value and value not in {"USER", "PASSWORD", "HOST", "DBNAME"} for value in values)
+        if not all(value and value not in {"USER", "PASSWORD", "HOST", "DBNAME"} for value in values):
+            return False
+        return not require_direct or "-pooler" not in (parsed.hostname or "")
 
 
 settings = Settings()

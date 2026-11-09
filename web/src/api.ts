@@ -3,17 +3,21 @@ import { authClient } from './auth'
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 
 async function accessToken(): Promise<string | null> {
-  const response = await authClient.getSession()
-  const data = response.data as { session?: { access_token?: string; token?: string } } | null
-  const sessionToken = data?.session?.access_token ?? data?.session?.token
-  if (sessionToken) return sessionToken
   const client = authClient as typeof authClient & {
     getJWTToken?: () => Promise<string | null>
     token?: () => Promise<{ data?: { token?: string } | null }>
   }
-  if (client.getJWTToken) return client.getJWTToken()
-  if (client.token) return (await client.token()).data?.token ?? null
-  return null
+  if (client.token) {
+    const response = await client.token()
+    if (response.data?.token) return response.data.token
+  }
+  if (client.getJWTToken) {
+    const token = await client.getJWTToken()
+    if (token) return token
+  }
+  const response = await authClient.getSession()
+  const data = response.data as { session?: { access_token?: string; token?: string } } | null
+  return data?.session?.access_token ?? data?.session?.token ?? null
 }
 
 export class ApiError extends Error {

@@ -23,7 +23,7 @@ cp .env.example .env
 
 Fill in the values in `.env`:
 
-- `DATABASE_URL`, `DATABASE_URL_UNPOOLED`: Neon PostgreSQL connection strings.
+- `DATABASE_URL`, `DATABASE_URL_UNPOOLED`: Neon PostgreSQL connection strings. Use the pooled URL for app traffic and the direct (non-pooler) URL for Alembic migrations.
 - `NEON_AUTH_URL`, `NEON_AUTH_JWKS_URL`, `VITE_NEON_AUTH_URL`: Neon Managed Auth endpoints.
 - `NEON_STORAGE_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`: private Neon Object Storage bucket and credentials.
 - `AI_BASE_URL`, `AI_API_KEY`, `AI_CHAT_MODEL`, `AI_EMBEDDING_MODEL`: OpenAI-compatible provider. Leave the key as a placeholder to run without AI.

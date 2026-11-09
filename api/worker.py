@@ -74,7 +74,7 @@ async def process_job(job_id: str, material_id: str) -> None:
 
 
 async def claim_job() -> tuple[str, str] | None:
-    if SessionLocal is None:
+    if SessionLocal is None or not settings.database_configured:
         raise RuntimeError("DATABASE_URL is not configured")
     async with SessionLocal() as db:
         result = await db.execute(
@@ -101,7 +101,7 @@ async def claim_job() -> tuple[str, str] | None:
 
 
 async def main() -> None:
-    if SessionLocal is None:
+    if SessionLocal is None or not settings.database_configured:
         raise RuntimeError("DATABASE_URL is not configured")
     while True:
         claimed = await claim_job()

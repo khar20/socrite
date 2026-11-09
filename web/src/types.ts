@@ -84,6 +84,7 @@ export type Submission = {
 export type Configuration = {
   auth_configured: boolean
   database_configured: boolean
+  migration_database_configured: boolean
   ai_configured: boolean
   chat_model: string | null
   embedding_model: string | null
