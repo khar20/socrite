@@ -1,0 +1,261 @@
+import re
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth import require_teacher
+from app.config import settings
+from app.db import get_db
+from app.models import Course, Material, MaterialChunk, MaterialFolder, ProcessingJob, Profile, Unit
+from app.routers.courses import owned_course
+from app.schemas import FolderCreate, LinkCreate, MaterialOut, MaterialUpdate, UploadRequest
+from app.services.audit import record_event
+from app.storage import storage_client
+
+router = APIRouter(tags=["materials"])
+ALLOWED_TYPES = {
+    ".pdf": {"application/pdf"},
+    ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+    ".pptx": {"application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+    ".txt": {"text/plain"},
+}
+
+
+async def owned_material(material_id: str, teacher: Profile, db: AsyncSession) -> Material:
+    result = await db.execute(
+        select(Material).join(Course).where(Material.id == material_id, Course.owner_id == teacher.id)
+    )
+    material = result.scalar_one_or_none()
+    if material is None:
+        raise HTTPException(status_code=404, detail="Material not found")
+    return material
+
+
+async def validate_folder(folder_id: str | None, course_id: str, db: AsyncSession) -> None:
+    if folder_id:
+        folder = await db.get(MaterialFolder, folder_id)
+        if folder is None or folder.course_id != course_id:
+            raise HTTPException(status_code=422, detail="Folder does not belong to this course")
+
+
+async def validate_unit(unit_id: str | None, course_id: str, db: AsyncSession) -> None:
+    if unit_id:
+        unit = await db.get(Unit, unit_id)
+        if unit is None or unit.course_id != course_id:
+            raise HTTPException(status_code=422, detail="Unit does not belong to this course")
+
+
+@router.get("/courses/{course_id}/folders")
+async def list_folders(
+    course_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    await owned_course(course_id, teacher, db)
+    result = await db.execute(select(MaterialFolder).where(MaterialFolder.course_id == course_id).order_by(MaterialFolder.position, MaterialFolder.name))
+    folders = result.scalars().all()
+    items = []
+    for folder in folders:
+        count = await db.scalar(select(func.count(Material.id)).where(Material.folder_id == folder.id)) or 0
+        items.append({"id": folder.id, "name": folder.name, "count": count})
+    return items
+
+
+@router.post("/courses/{course_id}/folders", status_code=201)
+async def create_folder(
+    course_id: str, data: FolderCreate, teacher: Profile = Depends(require_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await owned_course(course_id, teacher, db)
+    folder = MaterialFolder(course_id=course_id, name=data.name)
+    db.add(folder)
+    await db.flush()
+    record_event(db, teacher.id, "material_folder.created", "folder", folder.id, course_id)
+    await db.commit()
+    return {"id": folder.id, "name": folder.name, "count": 0}
+
+
+@router.get("/courses/{course_id}/materials", response_model=list[MaterialOut])
+async def list_materials(
+    course_id: str, folder_id: str | None = None, search: str = Query(default="", max_length=160),
+    teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> list[Material]:
+    await owned_course(course_id, teacher, db)
+    query = select(Material).where(Material.course_id == course_id)
+    if folder_id:
+        query = query.where(Material.folder_id == folder_id)
+    if search.strip():
+        query = query.where(Material.name.ilike(f"%{search.strip()}%"))
+    result = await db.execute(query.order_by(Material.created_at.desc()))
+    return list(result.scalars().all())
+
+
+@router.post("/courses/{course_id}/materials/uploads", status_code=201)
+async def begin_upload(
+    course_id: str, data: UploadRequest, teacher: Profile = Depends(require_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await owned_course(course_id, teacher, db)
+    if not settings.storage_configured or storage_client() is None:
+        raise HTTPException(status_code=503, detail="Neon Object Storage is not configured")
+    extension = Path(data.name).suffix.casefold()
+    if extension not in ALLOWED_TYPES or data.content_type not in ALLOWED_TYPES[extension]:
+        raise HTTPException(status_code=415, detail="Upload a PDF, DOCX, PPTX, or TXT file")
+    if data.size_bytes > settings.max_upload_mb * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"File exceeds the {settings.max_upload_mb} MB limit")
+    await validate_folder(data.folder_id, course_id, db)
+    await validate_unit(data.unit_id, course_id, db)
+    material = Material(course_id=course_id, folder_id=data.folder_id, unit_id=data.unit_id,
+                        uploader_id=teacher.id, name=Path(data.name).name,
+                        content_type=data.content_type, size_bytes=data.size_bytes)
+    db.add(material)
+    await db.flush()
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", material.name).strip("._") or "material"
+    material.object_key = f"courses/{course_id}/materials/{material.id}/{safe_name}"
+    try:
+        client = storage_client()
+        url = client.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": settings.neon_storage_bucket, "Key": material.object_key,
+                    "ContentType": material.content_type},
+            ExpiresIn=300,
+        )
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(status_code=502, detail="Could not prepare a secure upload URL") from exc
+    record_event(db, teacher.id, "material.upload.started", "material", material.id, course_id)
+    await db.commit()
+    return {"material_id": material.id, "upload_url": url,
+            "headers": {"Content-Type": material.content_type}, "expires_in": 300}
+
+
+@router.post("/materials/{material_id}/complete", response_model=MaterialOut)
+async def complete_upload(
+    material_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> Material:
+    material = await owned_material(material_id, teacher, db)
+    if material.status != "uploading" or not material.object_key:
+        raise HTTPException(status_code=409, detail="Material is not awaiting upload confirmation")
+    client = storage_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Neon Object Storage is not configured")
+    try:
+        object_info = client.head_object(Bucket=settings.neon_storage_bucket, Key=material.object_key)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="Uploaded file was not found in storage") from exc
+    if object_info.get("ContentLength") != material.size_bytes:
+        raise HTTPException(status_code=409, detail="Uploaded file size does not match the declared size")
+    if object_info.get("ContentType") and object_info["ContentType"] != material.content_type:
+        raise HTTPException(status_code=409, detail="Uploaded file type does not match the declared type")
+    material.status = "queued"
+    db.add(ProcessingJob(material_id=material.id))
+    record_event(db, teacher.id, "material.upload.completed", "material", material.id, material.course_id)
+    await db.commit()
+    await db.refresh(material)
+    return material
+
+
+@router.post("/courses/{course_id}/materials/links", status_code=201, response_model=MaterialOut)
+async def create_link(
+    course_id: str, data: LinkCreate, teacher: Profile = Depends(require_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> Material:
+    await owned_course(course_id, teacher, db)
+    await validate_folder(data.folder_id, course_id, db)
+    await validate_unit(data.unit_id, course_id, db)
+    material = Material(course_id=course_id, folder_id=data.folder_id, unit_id=data.unit_id,
+                        uploader_id=teacher.id, name=data.name, kind="link", url=str(data.url),
+                        content_type="text/uri-list", status="ready")
+    db.add(material)
+    await db.flush()
+    record_event(db, teacher.id, "material.link.created", "material", material.id, course_id)
+    await db.commit()
+    await db.refresh(material)
+    return material
+
+
+@router.get("/materials/{material_id}/download-url")
+async def material_download_url(
+    material_id: str, inline: bool = False, teacher: Profile = Depends(require_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    material = await owned_material(material_id, teacher, db)
+    if not material.object_key:
+        if material.url:
+            return {"url": material.url}
+        raise HTTPException(status_code=404, detail="File is not available")
+    client = storage_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="Neon Object Storage is not configured")
+    filename = re.sub(r'[\r\n"\\]', "_", material.name)
+    disposition = "inline" if inline else "attachment"
+    url = client.generate_presigned_url(
+        "get_object", Params={
+            "Bucket": settings.neon_storage_bucket,
+            "Key": material.object_key,
+            "ResponseContentDisposition": f'{disposition}; filename="{filename}"',
+        },
+        ExpiresIn=300,
+    )
+    return {"url": url}
+
+
+@router.patch("/materials/{material_id}", response_model=MaterialOut)
+async def update_material(
+    material_id: str, data: MaterialUpdate, teacher: Profile = Depends(require_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> Material:
+    material = await owned_material(material_id, teacher, db)
+    await validate_folder(data.folder_id, material.course_id, db)
+    await validate_unit(data.unit_id, material.course_id, db)
+    material.name = Path(data.name).name
+    material.folder_id = data.folder_id
+    material.unit_id = data.unit_id
+    record_event(db, teacher.id, "material.updated", "material", material.id, material.course_id)
+    await db.commit()
+    await db.refresh(material)
+    return material
+
+
+@router.get("/materials/{material_id}/text")
+async def material_text(
+    material_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> dict:
+    material = await owned_material(material_id, teacher, db)
+    result = await db.execute(select(MaterialChunk).where(MaterialChunk.material_id == material.id)
+                              .order_by(MaterialChunk.chunk_index).limit(30))
+    return {"chunks": [chunk.content for chunk in result.scalars().all()]}
+
+
+@router.post("/materials/{material_id}/retry", response_model=MaterialOut)
+async def retry_material(
+    material_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> Material:
+    material = await owned_material(material_id, teacher, db)
+    if material.status not in {"failed", "ready"}:
+        raise HTTPException(status_code=409, detail="Material cannot be retried in its current state")
+    material.status = "queued"
+    material.error = None
+    db.add(ProcessingJob(material_id=material.id))
+    await db.commit()
+    await db.refresh(material)
+    return material
+
+
+@router.delete("/materials/{material_id}", status_code=204)
+async def delete_material(
+    material_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> Response:
+    material = await owned_material(material_id, teacher, db)
+    if material.object_key:
+        client = storage_client()
+        if client is None:
+            raise HTTPException(status_code=503, detail="Neon Object Storage is not configured")
+        try:
+            client.delete_object(Bucket=settings.neon_storage_bucket, Key=material.object_key)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="Could not delete the stored file") from exc
+    record_event(db, teacher.id, "material.deleted", "material", material.id, material.course_id)
+    await db.delete(material)
+    await db.commit()
+    return Response(status_code=204)
