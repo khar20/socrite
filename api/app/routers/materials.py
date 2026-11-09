@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_teacher
@@ -10,7 +10,14 @@ from app.config import settings
 from app.db import get_db
 from app.models import Course, Material, MaterialChunk, MaterialFolder, ProcessingJob, Profile, Unit
 from app.routers.courses import owned_course
-from app.schemas import FolderCreate, LinkCreate, MaterialOut, MaterialUpdate, UploadRequest
+from app.schemas import (
+    FolderCreate,
+    FolderUpdate,
+    LinkCreate,
+    MaterialOut,
+    MaterialUpdate,
+    UploadRequest,
+)
 from app.services.audit import record_event
 from app.storage import storage_client
 
@@ -73,6 +80,42 @@ async def create_folder(
     record_event(db, teacher.id, "material_folder.created", "folder", folder.id, course_id)
     await db.commit()
     return {"id": folder.id, "name": folder.name, "count": 0}
+
+
+@router.patch("/folders/{folder_id}")
+async def update_folder(
+    folder_id: str, data: FolderUpdate, teacher: Profile = Depends(require_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    result = await db.execute(select(MaterialFolder).join(Course).where(
+        MaterialFolder.id == folder_id, Course.owner_id == teacher.id
+    ))
+    folder = result.scalar_one_or_none()
+    if folder is None:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    folder.name = data.name
+    count = await db.scalar(select(func.count(Material.id)).where(Material.folder_id == folder.id)) or 0
+    record_event(db, teacher.id, "material_folder.updated", "folder", folder.id, folder.course_id)
+    await db.commit()
+    return {"id": folder.id, "name": folder.name, "count": count}
+
+
+@router.delete("/folders/{folder_id}", status_code=204)
+async def delete_folder(
+    folder_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> Response:
+    result = await db.execute(select(MaterialFolder).join(Course).where(
+        MaterialFolder.id == folder_id, Course.owner_id == teacher.id
+    ))
+    folder = result.scalar_one_or_none()
+    if folder is None:
+        raise HTTPException(status_code=404, detail="Folder not found")
+    await db.execute(update(Material).where(Material.folder_id == folder.id).values(folder_id=None))
+    record_event(db, teacher.id, "material_folder.deleted", "folder", folder.id, folder.course_id,
+                 {"folder_name": folder.name})
+    await db.delete(folder)
+    await db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/courses/{course_id}/materials", response_model=list[MaterialOut])

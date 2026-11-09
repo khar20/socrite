@@ -64,7 +64,7 @@ export type Question = {
   prompt: string
   unit_id: string | null
   question_type: string
-  rubric: { criterion?: string }[]
+  rubric: { criterion: string }[]
   status: 'draft' | 'published' | 'archived'
   created_at?: string
 }

@@ -1,13 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_teacher
 from app.config import settings
 from app.db import get_db
-from app.models import AuditEvent, Course, CourseMember, Material, Profile, Question, Submission
+from app.models import (
+    AuditEvent,
+    Course,
+    CourseMember,
+    Material,
+    Profile,
+    Question,
+    Submission,
+    Unit,
+)
 from app.routers.courses import owned_course
-from app.schemas import QuestionCreate, SubmissionReview
+from app.schemas import QuestionCreate, QuestionUpdate, SubmissionReview
 from app.services.audit import record_event
 
 router = APIRouter(tags=["teacher"])
@@ -108,12 +117,57 @@ async def create_question(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await owned_course(course_id, teacher, db)
+    if data.unit_id:
+        unit = await db.get(Unit, data.unit_id)
+        if unit is None or unit.course_id != course_id:
+            raise HTTPException(status_code=422, detail="Unit does not belong to this course")
     question = Question(course_id=course_id, **data.model_dump())
     db.add(question)
     await db.flush()
     record_event(db, teacher.id, "question.created", "question", question.id, course_id)
     await db.commit()
     return {"id": question.id, **data.model_dump(), "status": question.status}
+
+
+@router.patch("/questions/{question_id}")
+async def update_question(
+    question_id: str, data: QuestionUpdate, teacher: Profile = Depends(require_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    question = await db.get(Question, question_id)
+    if question is None:
+        raise HTTPException(status_code=404, detail="Question not found")
+    await owned_course(question.course_id, teacher, db)
+    if question.status != "draft":
+        raise HTTPException(status_code=409, detail="Only draft questions can be edited")
+    if data.unit_id:
+        unit = await db.get(Unit, data.unit_id)
+        if unit is None or unit.course_id != question.course_id:
+            raise HTTPException(status_code=422, detail="Unit does not belong to this course")
+    for key, value in data.model_dump().items():
+        setattr(question, key, value)
+    record_event(db, teacher.id, "question.updated", "question", question.id, question.course_id)
+    await db.commit()
+    return {"id": question.id, **data.model_dump(), "status": question.status}
+
+
+@router.delete("/questions/{question_id}", status_code=204)
+async def delete_question(
+    question_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> Response:
+    question = await db.get(Question, question_id)
+    if question is None:
+        raise HTTPException(status_code=404, detail="Question not found")
+    await owned_course(question.course_id, teacher, db)
+    if question.status != "draft":
+        raise HTTPException(status_code=409, detail="Published questions cannot be deleted")
+    submissions = await db.scalar(select(func.count(Submission.id)).where(Submission.question_id == question.id)) or 0
+    if submissions:
+        raise HTTPException(status_code=409, detail="Questions used in submissions cannot be deleted")
+    record_event(db, teacher.id, "question.deleted", "question", question.id, question.course_id)
+    await db.delete(question)
+    await db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/courses/{course_id}/activity")

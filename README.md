@@ -24,7 +24,7 @@ cp .env.example .env
 Fill in the values in `.env`:
 
 - `DATABASE_URL`, `DATABASE_URL_UNPOOLED`: Neon PostgreSQL connection strings. Use the pooled URL for app traffic and the direct (non-pooler) URL for Alembic migrations.
-- `NEON_AUTH_URL`, `NEON_AUTH_JWKS_URL`, `VITE_NEON_AUTH_URL`: Neon Managed Auth endpoints.
+- `NEON_AUTH_URL`, `NEON_AUTH_JWKS_URL`, `VITE_NEON_AUTH_URL`: Neon Managed Auth endpoints. For every environment/branch, enable email/password, OTP verification, **Require Verification**, and **Send Verification Email on Sign-up** in Neon Auth settings. Teacher access is rejected unless the verified-email JWT claim is true.
 - `NEON_STORAGE_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`: private Neon Object Storage bucket and credentials.
 - `AI_BASE_URL`, `AI_API_KEY`, `AI_CHAT_MODEL`, `AI_EMBEDDING_MODEL`: OpenAI-compatible provider. Leave the key as a placeholder to run without AI.
 - `TEACHER_EMAILS`: comma-separated email addresses allowed into the teacher area.
@@ -32,6 +32,7 @@ Fill in the values in `.env`:
 - `CORS_ORIGINS`, `MAX_UPLOAD_MB`, `APP_ENV`: application settings.
 
 The root `.env` is ignored by git. Only `VITE_*` variables are exposed to browser code, so never store secrets in them.
+Add each deployed frontend origin to Neon Auth's trusted domains and to `CORS_ORIGINS`.
 
 ## Run locally
 

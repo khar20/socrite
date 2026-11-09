@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowDownToLine, BookOpen, Check, FileText, Folder, FolderPlus, Link2, MoreHorizontal, RotateCw, Sparkles, Trash2, UploadCloud, X } from 'lucide-react'
+import { ArrowDownToLine, BookOpen, Check, FileText, Folder, FolderPlus, Link2, MoreHorizontal, Pencil, RotateCw, Sparkles, Trash2, UploadCloud, X } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import { api, jsonBody } from '../api'
 import type { Configuration, CurriculumUnit, Folder as MaterialFolder, Material } from '../types'
@@ -43,6 +43,7 @@ export function MaterialsPage() {
   const [uploadOpen, setUploadOpen] = useState(false)
   const [linkOpen, setLinkOpen] = useState(false)
   const [folderOpen, setFolderOpen] = useState(false)
+  const [editingFolder, setEditingFolder] = useState<MaterialFolder | null>(null)
   const [editing, setEditing] = useState<Material | null>(null)
   const [preview, setPreview] = useState<Material | null>(null)
   const [linkName, setLinkName] = useState('')
@@ -113,6 +114,17 @@ export function MaterialsPage() {
     onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ['folders', courseId] }); setFolderOpen(false); setNewFolder(''); toast('Carpeta creada.') },
     onError: (error) => toast(error.message, 'error'),
   })
+  const updateFolder = useMutation({
+    mutationFn: () => api<MaterialFolder>(`/folders/${editingFolder!.id}`, { method: 'PATCH', body: jsonBody({ name: newFolder }) }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['folders', courseId] })
+      setFolderOpen(false)
+      setEditingFolder(null)
+      setNewFolder('')
+      toast('Carpeta actualizada.')
+    },
+    onError: (error) => toast(error.message, 'error'),
+  })
   const createLink = useMutation({
     mutationFn: () => api<Material>(`/courses/${courseId}/materials/links`, { method: 'POST', body: jsonBody({ name: linkName, url: linkUrl, folder_id: folderId === 'all' ? null : folderId, unit_id: linkUnit || null }) }),
     onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ['materials', courseId] }); await queryClient.invalidateQueries({ queryKey: ['folders', courseId] }); setLinkOpen(false); setLinkName(''); setLinkUrl(''); toast('Enlace añadido.') },
@@ -140,6 +152,17 @@ export function MaterialsPage() {
       await queryClient.invalidateQueries({ queryKey: ['course', courseId] })
       toast('Material eliminado.')
     } catch (error) { toast(error instanceof Error ? error.message : 'No se pudo eliminar.', 'error') }
+  }
+
+  async function removeFolder(folder: MaterialFolder) {
+    if (!window.confirm(`¿Eliminar “${folder.name}”? Sus materiales volverán a “General”.`)) return
+    try {
+      await api(`/folders/${folder.id}`, { method: 'DELETE' })
+      await queryClient.invalidateQueries({ queryKey: ['folders', courseId] })
+      await queryClient.invalidateQueries({ queryKey: ['materials', courseId] })
+      if (folderId === folder.id) setFolderId('all')
+      toast('Carpeta eliminada. Sus materiales siguen en el curso.')
+    } catch (error) { toast(error instanceof Error ? error.message : 'No se pudo eliminar la carpeta.', 'error') }
   }
 
   async function openFile(material: Material) {
@@ -190,9 +213,9 @@ export function MaterialsPage() {
     {!configuration.data!.storage_configured && <div className="inline-alert alert-warning"><Folder size={17} /><span>El almacenamiento de Neon no está configurado. Completa <code>AWS_*</code> y <code>NEON_STORAGE_BUCKET</code> en el servidor.</span></div>}
     {!configuration.data!.ai_configured && <div className="inline-alert alert-info"><Sparkles size={17} /><span>La extracción de texto funciona sin IA. Configura el proveedor para generar embeddings y borradores de preguntas.</span></div>}
     <div className="materials-layout">
-      <Card className="materials-folder-sidebar"><div className="card-heading card-heading-row"><h2>Carpetas</h2><Button variant="ghost" size="small" aria-label="Nueva carpeta" onClick={() => setFolderOpen(true)}><FolderPlus size={16} /></Button></div><div className="folder-list">
+      <Card className="materials-folder-sidebar"><div className="card-heading card-heading-row"><h2>Carpetas</h2><Button variant="ghost" size="small" aria-label="Nueva carpeta" onClick={() => { setEditingFolder(null); setNewFolder(''); setFolderOpen(true) }}><FolderPlus size={16} /></Button></div><div className="folder-list">
         <button className={`folder-button${folderId === 'all' ? ' is-active' : ''}`} onClick={() => setFolderId('all')}><Layers3Icon />Todo el curso<span>{folders.reduce((sum, folder) => sum + folder.count, 0)}</span></button>
-        {folders.map((folder) => <button className={`folder-button${folderId === folder.id ? ' is-active' : ''}`} key={folder.id} onClick={() => setFolderId(folder.id)}><Folder size={16} />{folder.name}<span>{folder.count}</span></button>)}
+        {folders.map((folder) => <FolderRow key={folder.id} folder={folder} selected={folderId === folder.id} onSelect={() => setFolderId(folder.id)} onEdit={() => { setEditingFolder(folder); setNewFolder(folder.name); setFolderOpen(true) }} onDelete={() => void removeFolder(folder)} />)}
       </div></Card>
       <section className="materials-main">
         <div className="materials-toolbar"><div><h2>{folderId === 'all' ? 'Todos los materiales' : currentFolder?.name || 'Carpeta'}</h2><p className="muted-text text-small">{materials.length} recurso{materials.length === 1 ? '' : 's'}{folderId === 'all' ? ' en este curso' : ' en esta carpeta'}</p></div><div className="materials-search"><TextInput type="search" aria-label="Buscar material" placeholder="Buscar materiales…" value={search} onChange={(event) => setSearch(event.target.value)} /></div></div>
@@ -218,7 +241,7 @@ export function MaterialsPage() {
       <Field label="Unidad"><Select value={linkUnit} onChange={(event) => setLinkUnit(event.target.value)}><option value="">Sin unidad</option>{units.map((unit) => <option value={unit.id} key={unit.id}>{unit.title}</option>)}</Select></Field>
     </Modal>
 
-    <Modal open={folderOpen} onClose={() => setFolderOpen(false)} title="Nueva carpeta" description="Agrupa materiales por unidad, tema o tipo de recurso." onSubmit={(event) => { event.preventDefault(); createFolder.mutate() }} submitLabel="Crear carpeta" busy={createFolder.isPending}>
+    <Modal open={folderOpen} onClose={() => { setFolderOpen(false); setEditingFolder(null) }} title={editingFolder ? 'Editar carpeta' : 'Nueva carpeta'} description={editingFolder ? 'Cambia el nombre de la carpeta.' : 'Agrupa materiales por unidad, tema o tipo de recurso.'} onSubmit={(event) => { event.preventDefault(); editingFolder ? updateFolder.mutate() : createFolder.mutate() }} submitLabel={editingFolder ? 'Guardar cambios' : 'Crear carpeta'} busy={createFolder.isPending || updateFolder.isPending}>
       <Field label="Nombre de carpeta" required><TextInput autoFocus value={newFolder} onChange={(event) => setNewFolder(event.target.value)} required maxLength={160} placeholder="Ej. Unidad 1" /></Field>
     </Modal>
 
@@ -229,6 +252,16 @@ export function MaterialsPage() {
 
     <MaterialPreview material={preview} onClose={() => setPreview(null)} />
   </>
+}
+
+function FolderRow({ folder, selected, onSelect, onEdit, onDelete }: {
+  folder: MaterialFolder; selected: boolean; onSelect: () => void; onEdit: () => void; onDelete: () => void
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  return <div className={`folder-row${selected ? ' is-active' : ''}`}>
+    <button className={`folder-button${selected ? ' is-active' : ''}`} onClick={onSelect}><Folder size={16} /><span className="folder-name">{folder.name}</span><span>{folder.count}</span></button>
+    <div className="row-menu-wrap"><Button variant="ghost" size="small" aria-label={`Acciones de ${folder.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></Button>{menuOpen && <div className="row-menu"><button onClick={() => { setMenuOpen(false); onEdit() }}><Pencil size={14} />Renombrar</button><button className="danger-text" onClick={() => { setMenuOpen(false); onDelete() }}><Trash2 size={14} />Eliminar carpeta</button></div>}</div>
+  </div>
 }
 
 function MaterialRow({ material, onOpen, onEdit, onDelete, onRetry, onGenerate, onDownload, aiReady }: {

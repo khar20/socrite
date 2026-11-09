@@ -85,9 +85,13 @@
 .subsection-empty { margin-block-start: 11px; color: hsl(var(--mf)); font-size: 11px; }
 .materials-folder-sidebar .card-heading { padding-block-start: 13px; }
 .folder-list { display: flex; flex-direction: column; gap: 2px; padding: 8px; }
+.folder-row { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.folder-row .folder-button { flex: 1; min-width: 0; }
+.folder-row > .row-menu-wrap { flex: 0 0 auto; }
 .folder-button { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 7px 8px; border: 0; border-radius: 7px; color: hsl(var(--mf)); background: transparent; text-align: start; font-size: 11.5px; }
 .folder-button:hover, .folder-button.is-active { color: hsl(var(--fg)); background: hsl(var(--mu)); }
-.folder-button > span { margin-inline-start: auto; color: hsl(var(--mf)); font-size: 10px; font-variant-numeric: tabular-nums; }
+.folder-button > span:last-child { margin-inline-start: auto; color: hsl(var(--mf)); font-size: 10px; font-variant-numeric: tabular-nums; }
+.folder-button .folder-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .materials-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-block-end: 12px; }
 .materials-toolbar h2 { font-size: 15px; }
 .materials-toolbar p { margin-block-start: 3px; }
@@ -150,6 +154,7 @@
 .question-copy { flex: 1; min-width: 0; }
 .question-copy p { display: -webkit-box; overflow: hidden; font-size: 11.5px; font-weight: 560; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .question-copy small { display: block; margin-block-start: 3px; color: hsl(var(--mf)); font-size: 10px; }
+.question-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
 .form-note { margin-block: 4px 0; }
 .settings-form { padding-block-start: 15px; }
 .setting-toggle { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 61px; padding-block: 9px; border-block-end: 1px solid hsl(var(--br)); cursor: pointer; }
@@ -220,6 +225,7 @@
   .question-row { flex-wrap: wrap; }
   .question-copy { flex-basis: calc(100% - 55px); }
   .question-row > .status-badge { margin-inline-start: 45px; }
+  .question-actions { margin-inline-start: auto; }
   .login-screen { grid-template-columns: minmax(0, 1fr); }
   .login-aside { display: none; }
   .login-panel { min-height: 100dvh; justify-content: center; padding: 24px; }

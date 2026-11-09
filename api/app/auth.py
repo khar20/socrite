@@ -54,9 +54,11 @@ async def sync_profile(
     email = str(claims.get("email", "")).strip().casefold()
     if not profile_id or not email:
         raise HTTPException(status_code=401, detail="The access token has no user email")
+    role = role_for_email(email)
+    if role == "teacher" and claims.get("emailVerified") is not True:
+        raise HTTPException(status_code=403, detail="Verify your institutional email before using teacher access")
     result = await db.execute(select(Profile).where(Profile.id == str(profile_id)))
     profile = result.scalar_one_or_none()
-    role = role_for_email(email)
     if profile is None:
         profile = Profile(id=str(profile_id), email=email, name=str(claims.get("name") or ""), role=role)
         db.add(profile)
@@ -73,16 +75,27 @@ async def current_profile(
     claims: dict = Depends(authenticated_claims), db: AsyncSession = Depends(get_db),
 ) -> Profile:
     profile_id = claims.get("sub")
+    email = str(claims.get("email", "")).strip().casefold()
     if not profile_id:
         raise HTTPException(status_code=401, detail="Invalid access token")
     result = await db.execute(select(Profile).where(Profile.id == str(profile_id)))
     profile = result.scalar_one_or_none()
     if profile is None:
         raise HTTPException(status_code=403, detail="Synchronize your account before continuing")
+    if not email or profile.email.casefold() != email:
+        raise HTTPException(status_code=403, detail="Synchronize your account before continuing")
     return profile
 
 
-async def require_teacher(profile: Profile = Depends(current_profile)) -> Profile:
-    if profile.email.casefold() not in settings.teacher_email_set or profile.role != "teacher":
+async def require_teacher(
+    profile: Profile = Depends(current_profile),
+    claims: dict = Depends(authenticated_claims),
+) -> Profile:
+    email = str(claims.get("email", "")).strip().casefold()
+    if claims.get("emailVerified") is not True:
+        raise HTTPException(status_code=403, detail="Verify your institutional email before using teacher access")
+    if not email or email != profile.email.casefold():
+        raise HTTPException(status_code=403, detail="Synchronize your account before continuing")
+    if email not in settings.teacher_email_set or profile.role != "teacher":
         raise HTTPException(status_code=403, detail="Teacher access is not enabled for this account")
     return profile

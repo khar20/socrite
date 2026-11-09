@@ -84,6 +84,10 @@ class FolderCreate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
 
 
+class FolderUpdate(FolderCreate):
+    pass
+
+
 class UploadRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     content_type: str = Field(min_length=1, max_length=180)
@@ -122,11 +126,19 @@ class MaterialOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class RubricCriterion(BaseModel):
+    criterion: str = Field(min_length=1, max_length=500)
+
+
 class QuestionCreate(BaseModel):
     prompt: str = Field(min_length=5, max_length=10000)
     unit_id: str | None = None
     question_type: str = Field(default="open", pattern="^open$")
-    rubric: list[dict] = Field(default_factory=list)
+    rubric: list[RubricCriterion] = Field(default_factory=list, max_length=30)
+
+
+class QuestionUpdate(QuestionCreate):
+    pass
 
 
 class SubmissionReview(BaseModel):
