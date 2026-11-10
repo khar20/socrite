@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
 class ProfileOut(BaseModel):
@@ -133,8 +134,27 @@ class RubricCriterion(BaseModel):
 class QuestionCreate(BaseModel):
     prompt: str = Field(min_length=5, max_length=10000)
     unit_id: str | None = None
-    question_type: str = Field(default="open", pattern="^open$")
+    skill_id: str | None = None
+    question_type: str = Field(default="open", pattern="^(open|multiple_choice|numeric)$")
+    options: list[str] | None = Field(default=None, max_length=8)
+    answer_key: Any = None
     rubric: list[RubricCriterion] = Field(default_factory=list, max_length=30)
+
+    @model_validator(mode="after")
+    def validate_answer_format(self) -> "QuestionCreate":
+        if self.question_type == "multiple_choice":
+            if not self.options or len(self.options) < 2:
+                raise ValueError("Multiple-choice questions require at least two options")
+            if not isinstance(self.answer_key, int) or not 0 <= self.answer_key < len(self.options):
+                raise ValueError("The answer key must be the index of a valid option")
+        elif self.question_type == "numeric":
+            if not isinstance(self.answer_key, (int, float)) or isinstance(self.answer_key, bool):
+                raise ValueError("Numeric questions require a numeric answer key")
+            if self.options:
+                raise ValueError("Numeric questions cannot have options")
+        elif self.options or self.answer_key is not None:
+            raise ValueError("Open questions cannot include options or an answer key")
+        return self
 
 
 class QuestionUpdate(QuestionCreate):
@@ -144,3 +164,37 @@ class QuestionUpdate(QuestionCreate):
 class SubmissionReview(BaseModel):
     final_score: int = Field(ge=0, le=20)
     teacher_comment: str = Field(default="", max_length=5000)
+
+
+class CourseInviteCreate(BaseModel):
+    email: str = Field(pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$", max_length=320)
+
+
+class AssessmentCreate(BaseModel):
+    title: str = Field(min_length=2, max_length=200)
+    description: str = Field(default="", max_length=5000)
+    kind: str = Field(default="practice", pattern="^(diagnostic|practice|quiz|transfer)$")
+
+
+class AssessmentQuestionIn(BaseModel):
+    question_id: str
+    position: int = Field(default=0, ge=0)
+    points: float = Field(default=1, gt=0, le=1000)
+
+
+class StudentAnswerIn(BaseModel):
+    response: Any
+    confidence: int | None = Field(default=None, ge=0, le=2)
+
+
+class ReviewRatingIn(BaseModel):
+    rating: int = Field(ge=0, le=3)
+
+
+class TutorMessageCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=5000)
+
+
+class ReflectionCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=10000)
+    prompt: str = Field(default="", max_length=500)

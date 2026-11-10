@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './auth-context'
 import { AppLayout, PageLoading } from './components/layout'
 import { AccessDenied, LoginPage } from './pages/Login'
@@ -11,21 +11,35 @@ import { StudentsPage, ReviewsPage } from './pages/TeacherOperations'
 import { QuestionsPage } from './pages/Questions'
 import { SettingsPage } from './pages/Settings'
 import { ActivityPage } from './pages/Activity'
+import { StudentDashboardPage, StudentCoursePage, StudentCurriculumPage, StudentMaterialsPage,
+  StudentAssessmentsPage, StudentAttemptPage, StudentProgressPage, StudentJoinPage,
+  StudentTutorPage, StudentFeedbackPage } from './pages/Student'
+import { AssessmentsPage } from './pages/Assessments'
 
-function ProtectedLayout() {
+function ProtectedLayout({ role }: { role: 'teacher' | 'student' }) {
   const { profile, loading } = useAuth()
   if (loading) return <PageLoading />
   if (!profile) return <Navigate to="/login" replace />
-  if (profile.role !== 'teacher') return <AccessDenied />
-  return <AppLayout />
+  if (profile.role !== role) return <AccessDenied />
+  return <AppLayout mode={role} />
+}
+
+function InvitationRoute() {
+  const { profile, loading } = useAuth()
+  const location = useLocation()
+  if (loading) return <PageLoading />
+  if (!profile) return <Navigate to="/login" state={{ returnTo: location.pathname }} replace />
+  if (profile.role !== 'student') return <AccessDenied />
+  return <StudentJoinPage />
 }
 
 export default function App() {
   const { profile } = useAuth()
   return <Routes>
-    <Route path="/login" element={profile ? <Navigate to={profile.role === 'teacher' ? '/teacher' : '/access-denied'} replace /> : <LoginPage />} />
+    <Route path="/login" element={profile ? <Navigate to={profile.role === 'teacher' ? '/teacher' : '/student'} replace /> : <LoginPage />} />
     <Route path="/access-denied" element={<AccessDenied />} />
-    <Route path="/teacher" element={<ProtectedLayout />}>
+    <Route path="/join/:token" element={<InvitationRoute />} />
+    <Route path="/teacher" element={<ProtectedLayout role="teacher" />}>
       <Route index element={<DashboardPage />} />
       <Route path="courses" element={<CoursesPage />} />
       <Route path="courses/:courseId" element={<CourseOverviewPage />} />
@@ -34,10 +48,23 @@ export default function App() {
       <Route path="courses/:courseId/students" element={<StudentsPage />} />
       <Route path="courses/:courseId/reviews" element={<ReviewsPage />} />
       <Route path="courses/:courseId/questions" element={<QuestionsPage />} />
+      <Route path="courses/:courseId/assessments" element={<AssessmentsPage />} />
       <Route path="courses/:courseId/settings" element={<SettingsPage />} />
       <Route path="courses/:courseId/activity" element={<ActivityPage />} />
       <Route path="activity" element={<ActivityPage />} />
     </Route>
-    <Route path="*" element={<Navigate to={profile ? (profile.role === 'teacher' ? '/teacher' : '/access-denied') : '/login'} replace />} />
+    <Route path="/student" element={<ProtectedLayout role="student" />}>
+      <Route index element={<StudentDashboardPage />} />
+      <Route path="courses" element={<StudentDashboardPage />} />
+      <Route path="courses/:courseId" element={<StudentCoursePage />} />
+      <Route path="courses/:courseId/curriculum" element={<StudentCurriculumPage />} />
+      <Route path="courses/:courseId/materials" element={<StudentMaterialsPage />} />
+      <Route path="courses/:courseId/assessments" element={<StudentAssessmentsPage />} />
+      <Route path="courses/:courseId/tutor" element={<StudentTutorPage />} />
+      <Route path="courses/:courseId/feedback" element={<StudentFeedbackPage />} />
+      <Route path="courses/:courseId/progress" element={<StudentProgressPage />} />
+      <Route path="attempts/:attemptId" element={<StudentAttemptPage />} />
+    </Route>
+    <Route path="*" element={<Navigate to={profile ? (profile.role === 'teacher' ? '/teacher' : '/student') : '/login'} replace />} />
   </Routes>
 }

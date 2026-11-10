@@ -1,26 +1,69 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ClipboardCheck, Mail, Users } from 'lucide-react'
+import { ClipboardCheck, Copy, Link2, Mail, Plus, Trash2, Users } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import { api, jsonBody } from '../api'
 import type { Submission } from '../types'
-import { Badge, Button, Card, EmptyState, ErrorState, Field, LoadingState, PageHeader, TextArea, TextInput, useToast } from '../components/ui'
+import { Badge, Button, Card, EmptyState, ErrorState, Field, LoadingState, Modal, PageHeader, TextArea, TextInput, useToast } from '../components/ui'
 
-type StudentsResult = { students: { id: string; name: string; email: string }[] }
+type StudentsResult = {
+  students: {
+    id: string; name: string; email: string; mastery_average: number | null; evidence_count: number
+    skills: { id: string; name: string; unit: string; probability: number; observations: number }[]
+  }[]
+  invitations: { id: string; email: string; expires_at: string }[]
+}
 
 export function StudentsPage() {
   const { courseId = '' } = useParams()
+  const queryClient = useQueryClient()
+  const toast = useToast()
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [email, setEmail] = useState('')
+  const [inviteUrl, setInviteUrl] = useState('')
+  const [selectedStudent, setSelectedStudent] = useState<StudentsResult['students'][number] | null>(null)
   const students = useQuery({ queryKey: ['students', courseId], queryFn: () => api<StudentsResult>(`/courses/${courseId}/students`) })
+  const invite = useMutation({
+    mutationFn: () => api<{ id: string; email: string; token: string; expires_at: string }>(`/courses/${courseId}/invitations`, {
+      method: 'POST', body: jsonBody({ email }),
+    }),
+    onSuccess: async (result) => {
+      setInviteUrl(`${window.location.origin}/join/${result.token}`)
+      setEmail('')
+      await queryClient.invalidateQueries({ queryKey: ['students', courseId] })
+      toast('Enlace de invitación creado. Compártelo con el estudiante.')
+    },
+    onError: (error) => toast(error.message, 'error'),
+  })
   if (students.isLoading) return <LoadingState />
   if (students.isError) return <ErrorState message="No pudimos cargar la lista de estudiantes." retry={() => void students.refetch()} />
-  const { students: roster } = students.data!
+  const { students: roster, invitations } = students.data!
+  async function copyInvite() {
+    try { await navigator.clipboard.writeText(inviteUrl); toast('Enlace copiado.') }
+    catch { toast('Copia el enlace desde el campo de texto.', 'info') }
+  }
+  async function revoke(invitationId: string) {
+    if (!window.confirm('¿Revocar este enlace de invitación?')) return
+    try {
+      await api(`/invitations/${invitationId}`, { method: 'DELETE' })
+      await queryClient.invalidateQueries({ queryKey: ['students', courseId] })
+      toast('Invitación revocada.')
+    } catch (error) { toast(error instanceof Error ? error.message : 'No se pudo revocar la invitación.', 'error') }
+  }
   return <>
-    <PageHeader title="Estudiantes" description="Consulta a las personas matriculadas en este curso." />
-    {!roster.length ? <Card><EmptyState icon={Users} title="Aún no hay estudiantes" description="La lista se completará cuando la matrícula del curso esté habilitada y los estudiantes se unan." /></Card> : <Card>
+    <PageHeader title="Estudiantes" description="Administra la matrícula y consulta a las personas inscritas." actions={<Button onClick={() => { setInviteUrl(''); setInviteOpen(true) }}><Plus size={16} />Invitar estudiante</Button>} />
+    {!roster.length ? <Card><EmptyState icon={Users} title="Aún no hay estudiantes" description="Crea un enlace de invitación y compártelo con tus estudiantes." action={<Button onClick={() => { setInviteUrl(''); setInviteOpen(true) }}><Plus size={15} />Crear invitación</Button>} /></Card> : <Card>
       <div className="card-heading card-heading-row"><div><h2>Lista del curso</h2><p className="muted-text text-small">{roster.length} estudiante{roster.length === 1 ? '' : 's'} matriculado{roster.length === 1 ? '' : 's'}.</p></div></div>
-      <div className="card-content"><div className="people-list">{roster.map((student) => <div className="person-row" key={student.id}><div className="avatar">{student.name.slice(0, 1).toUpperCase()}</div><div className="person-copy"><strong>{student.name || 'Nombre pendiente'}</strong><span>{student.email}</span></div><Badge tone="success">Matriculado</Badge></div>)}</div></div>
+      <div className="card-content"><div className="people-list">{roster.map((student) => <div className="person-row" key={student.id}><div className="avatar">{student.name.slice(0, 1).toUpperCase()}</div><div className="person-copy"><strong>{student.name || 'Nombre pendiente'}</strong><span>{student.email}</span></div><span className="student-row-mastery">{student.mastery_average === null ? 'Sin evidencia' : `${Math.round(student.mastery_average * 100)}% dominio estimado · ${student.evidence_count} evidencias`}</span><Badge tone="success">Matriculado</Badge><Button size="small" variant="outline" disabled={!student.skills.length} onClick={() => setSelectedStudent(student)}>Progreso</Button></div>)}</div></div>
     </Card>}
-    <div className="inline-alert alert-info page-note"><Mail size={17} /><span>La matrícula y el envío de invitaciones todavía no están habilitados. Esta vista no crea cuentas ni envía correos.</span></div>
+    {invitations.length > 0 && <Card className="invite-card"><div className="card-heading"><h2>Invitaciones pendientes</h2><p className="muted-text text-small">Cada enlace se puede usar una sola vez y vence en siete días.</p></div><div className="card-content people-list">{invitations.map((item) => <div className="person-row" key={item.id}><div className="avatar"><Link2 size={15} /></div><div className="person-copy"><strong>{item.email}</strong><span>Vence {new Date(item.expires_at).toLocaleDateString('es')}</span></div><Badge tone="warning">Pendiente</Badge><Button size="small" variant="ghost" aria-label="Revocar invitación" onClick={() => void revoke(item.id)}><Trash2 size={15} /></Button></div>)}</div></Card>}
+    <div className="inline-alert alert-info page-note"><Mail size={17} /><span>El enlace no se envía por correo automáticamente. Compártelo por un canal institucional y el estudiante deberá verificar una cuenta con el correo invitado.</span></div>
+    <Modal open={inviteOpen} onClose={() => { setInviteOpen(false); setInviteUrl('') }} title={inviteUrl ? 'Invitación creada' : 'Invitar estudiante'} description={inviteUrl ? 'Copia este enlace y compártelo con la persona invitada.' : 'El enlace quedará asociado a este correo y vencerá en siete días.'} onSubmit={inviteUrl ? undefined : (event) => { event.preventDefault(); invite.mutate() }} submitLabel={inviteUrl ? undefined : 'Crear enlace'} busy={invite.isPending}>
+      {!inviteUrl ? <Field label="Correo institucional del estudiante" required><TextInput autoFocus type="email" value={email} onChange={(event) => setEmail(event.target.value)} required maxLength={320} placeholder="estudiante@universidad.edu" /></Field> : <><Field label="Enlace de invitación"><TextInput readOnly value={inviteUrl} onFocus={(event) => event.currentTarget.select()} /></Field><div className="modal-actions"><Button variant="outline" onClick={() => void copyInvite()}><Copy size={15} />Copiar enlace</Button></div></>}
+    </Modal>
+    <Modal open={!!selectedStudent} onClose={() => setSelectedStudent(null)} title={selectedStudent?.name || 'Progreso del estudiante'} description={selectedStudent ? `${Math.round((selectedStudent.mastery_average || 0) * 100)}% de dominio estimado · ${selectedStudent.evidence_count} evidencias` : undefined} wide>
+      {selectedStudent?.skills.map((skill) => <div className="student-skill-detail" key={skill.id}><div className="student-skill-detail-heading"><strong>{skill.name}</strong><span className="muted-text text-small">{Math.round(skill.probability * 100)}% · {skill.observations} evidencias</span></div><p className="muted-text text-small">{skill.unit}</p><div className="progress-track"><i style={{ width: `${Math.round(skill.probability * 100)}%` }} /></div></div>)}
+    </Modal>
   </>
 }
 

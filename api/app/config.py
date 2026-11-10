@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     ai_base_url: str = ""
     ai_api_key: str = ""
+    neon_ai_gateway_base_url: str = ""
+    neon_ai_gateway_token: str = ""
     ai_chat_model: str = ""
     ai_embedding_model: str = ""
     teacher_emails: str = ""
@@ -52,8 +54,34 @@ class Settings(BaseSettings):
 
     @property
     def ai_configured(self) -> bool:
-        values = (self.ai_base_url, self.ai_api_key, self.ai_chat_model, self.ai_embedding_model)
-        return all(value and not value.startswith("YOUR_") for value in values)
+        external = all(value and not value.startswith("YOUR_")
+                       for value in (self.ai_base_url, self.ai_api_key))
+        gateway = all(value and not value.startswith("YOUR_")
+                      for value in (self.neon_ai_gateway_base_url, self.neon_ai_gateway_token))
+        models = all((self.ai_chat_model, self.ai_embedding_model))
+        return (external or gateway) and models
+
+    @property
+    def ai_request_base_url(self) -> str:
+        if self.ai_base_url and self.ai_api_key and not self.ai_api_key.startswith("YOUR_"):
+            return self.ai_base_url.rstrip("/")
+        if self.neon_ai_gateway_base_url and self.neon_ai_gateway_token:
+            return f"{self.neon_ai_gateway_base_url.rstrip('/')}/v1"
+        return ""
+
+    @property
+    def ai_request_api_key(self) -> str:
+        if self.ai_api_key and not self.ai_api_key.startswith("YOUR_"):
+            return self.ai_api_key
+        return self.neon_ai_gateway_token
+
+    @property
+    def ai_provider_name(self) -> str:
+        if self.ai_base_url and self.ai_api_key and not self.ai_api_key.startswith("YOUR_"):
+            return "OpenAI-compatible provider"
+        if self.neon_ai_gateway_base_url and self.neon_ai_gateway_token:
+            return "Neon AI Gateway"
+        return ""
 
     @property
     def auth_configured(self) -> bool:

@@ -55,8 +55,8 @@ async def sync_profile(
     if not profile_id or not email:
         raise HTTPException(status_code=401, detail="The access token has no user email")
     role = role_for_email(email)
-    if role == "teacher" and claims.get("emailVerified") is not True:
-        raise HTTPException(status_code=403, detail="Verify your institutional email before using teacher access")
+    if claims.get("emailVerified") is not True:
+        raise HTTPException(status_code=403, detail="Verify your email before continuing")
     result = await db.execute(select(Profile).where(Profile.id == str(profile_id)))
     profile = result.scalar_one_or_none()
     if profile is None:
@@ -98,4 +98,18 @@ async def require_teacher(
         raise HTTPException(status_code=403, detail="Synchronize your account before continuing")
     if email not in settings.teacher_email_set or profile.role != "teacher":
         raise HTTPException(status_code=403, detail="Teacher access is not enabled for this account")
+    return profile
+
+
+async def require_student(
+    profile: Profile = Depends(current_profile),
+    claims: dict = Depends(authenticated_claims),
+) -> Profile:
+    if claims.get("emailVerified") is not True:
+        raise HTTPException(status_code=403, detail="Verify your email before continuing")
+    email = str(claims.get("email", "")).strip().casefold()
+    if not email or email != profile.email.casefold():
+        raise HTTPException(status_code=403, detail="Synchronize your account before continuing")
+    if profile.role != "student":
+        raise HTTPException(status_code=403, detail="Student access is not enabled for this account")
     return profile

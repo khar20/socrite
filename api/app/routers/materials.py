@@ -30,10 +30,13 @@ ALLOWED_TYPES = {
 }
 
 
-async def owned_material(material_id: str, teacher: Profile, db: AsyncSession) -> Material:
-    result = await db.execute(
-        select(Material).join(Course).where(Material.id == material_id, Course.owner_id == teacher.id)
-    )
+async def owned_material(
+    material_id: str, teacher: Profile, db: AsyncSession, lock: bool = False,
+) -> Material:
+    query = select(Material).join(Course).where(Material.id == material_id, Course.owner_id == teacher.id)
+    if lock:
+        query = query.with_for_update(of=Material)
+    result = await db.execute(query)
     material = result.scalar_one_or_none()
     if material is None:
         raise HTTPException(status_code=404, detail="Material not found")
@@ -61,11 +64,13 @@ async def list_folders(
     await owned_course(course_id, teacher, db)
     result = await db.execute(select(MaterialFolder).where(MaterialFolder.course_id == course_id).order_by(MaterialFolder.position, MaterialFolder.name))
     folders = result.scalars().all()
-    items = []
-    for folder in folders:
-        count = await db.scalar(select(func.count(Material.id)).where(Material.folder_id == folder.id)) or 0
-        items.append({"id": folder.id, "name": folder.name, "count": count})
-    return items
+    counts = dict((await db.execute(
+        select(Material.folder_id, func.count(Material.id))
+        .where(Material.course_id == course_id, Material.folder_id.is_not(None))
+        .group_by(Material.folder_id)
+    )).all())
+    return [{"id": folder.id, "name": folder.name, "count": counts.get(folder.id, 0)}
+            for folder in folders]
 
 
 @router.post("/courses/{course_id}/folders", status_code=201)
@@ -176,7 +181,9 @@ async def begin_upload(
 async def complete_upload(
     material_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Material:
-    material = await owned_material(material_id, teacher, db)
+    material = await owned_material(material_id, teacher, db, lock=True)
+    if material.status in {"queued", "processing", "ready"}:
+        return material
     if material.status != "uploading" or not material.object_key:
         raise HTTPException(status_code=409, detail="Material is not awaiting upload confirmation")
     client = storage_client()
@@ -274,7 +281,9 @@ async def material_text(
 async def retry_material(
     material_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Material:
-    material = await owned_material(material_id, teacher, db)
+    material = await owned_material(material_id, teacher, db, lock=True)
+    if material.status in {"queued", "processing"}:
+        return material
     if material.status not in {"failed", "ready"}:
         raise HTTPException(status_code=409, detail="Material cannot be retried in its current state")
     material.status = "queued"

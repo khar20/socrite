@@ -25,14 +25,27 @@ async def list_courses(
 ) -> list[dict]:
     result = await db.execute(select(Course).where(Course.owner_id == teacher.id).order_by(Course.updated_at.desc()))
     courses = result.scalars().all()
+    course_ids = [course.id for course in courses]
+    if not course_ids:
+        return []
+    unit_counts = dict((await db.execute(
+        select(Unit.course_id, func.count(Unit.id)).where(Unit.course_id.in_(course_ids))
+        .group_by(Unit.course_id)
+    )).all())
+    material_counts = dict((await db.execute(
+        select(Material.course_id, func.count(Material.id)).where(Material.course_id.in_(course_ids))
+        .group_by(Material.course_id)
+    )).all())
+    student_counts = dict((await db.execute(
+        select(CourseMember.course_id, func.count(CourseMember.id)).where(
+            CourseMember.course_id.in_(course_ids), CourseMember.role == "student",
+        ).group_by(CourseMember.course_id)
+    )).all())
     items = []
     for course in courses:
-        units = await db.scalar(select(func.count(Unit.id)).where(Unit.course_id == course.id)) or 0
-        materials = await db.scalar(select(func.count(Material.id)).where(Material.course_id == course.id)) or 0
-        students = await db.scalar(select(func.count(CourseMember.id)).where(
-            CourseMember.course_id == course.id, CourseMember.role == "student")) or 0
-        items.append({**CourseOut.model_validate(course).model_dump(), "unit_count": units,
-                      "material_count": materials, "student_count": students})
+        items.append({**CourseOut.model_validate(course).model_dump(), "unit_count": unit_counts.get(course.id, 0),
+                      "material_count": material_counts.get(course.id, 0),
+                      "student_count": student_counts.get(course.id, 0)})
     return items
 
 
@@ -87,10 +100,7 @@ async def get_settings(
     result = await db.execute(select(CourseSettings).where(CourseSettings.course_id == course_id))
     settings = result.scalar_one_or_none()
     if settings is None:
-        settings = CourseSettings(course_id=course_id)
-        db.add(settings)
-        await db.commit()
-        await db.refresh(settings)
+        return CourseSettingsOut(course_id=course_id)
     return CourseSettingsOut.model_validate(settings)
 
 

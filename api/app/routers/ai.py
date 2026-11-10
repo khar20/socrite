@@ -54,7 +54,7 @@ async def publish_question(
     await owned_course(question.course_id, teacher, db)
     if question.status == "published":
         return {"id": question.id, "status": question.status}
-    if not question.rubric:
+    if question.question_type == "open" and not question.rubric:
         raise HTTPException(status_code=422, detail="Add at least one review criterion before publishing")
     question.status = "published"
     record_event(db, teacher.id, "question.published", "question", question.id, question.course_id)

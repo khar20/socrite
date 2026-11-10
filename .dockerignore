@@ -1,0 +1,11 @@
+.env
+.env.*
+.neon
+.git/
+node_modules/
+web/dist/
+web/.vite/
+api/.venv/
+api/__pycache__/
+api/.pytest_cache/
+api/.ruff_cache/

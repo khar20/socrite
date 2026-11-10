@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { BookOpen, Lightbulb, LockKeyhole, Mail } from 'lucide-react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { authConfigured, authClient, verifyEmailCode } from '../auth'
 import { useAuth } from '../auth-context'
 import { Button, Field, TextInput } from '../components/ui'
@@ -8,6 +8,7 @@ import { Button, Field, TextInput } from '../components/ui'
 export function LoginPage() {
   const { refresh, error: authError } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in')
   const [step, setStep] = useState<'auth' | 'verify'>('auth')
   const [email, setEmail] = useState('')
@@ -21,7 +22,12 @@ export function LoginPage() {
   async function continueToApp() {
     const profile = await refresh()
     if (!profile) throw new Error('La sesión se inició, pero no se pudo verificar el acceso al servidor.')
-    navigate(profile.role === 'teacher' ? '/teacher' : '/access-denied', { replace: true })
+    const returnTo = (location.state as { returnTo?: string } | null)?.returnTo
+    if (returnTo?.startsWith('/join/')) {
+      navigate(returnTo, { replace: true })
+      return
+    }
+    navigate(profile.role === 'teacher' ? '/teacher' : '/student', { replace: true })
   }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {

@@ -63,9 +63,22 @@ export type Question = {
   id: string
   prompt: string
   unit_id: string | null
-  question_type: string
+  skill_id?: string | null
+  question_type: 'open' | 'multiple_choice' | 'numeric'
+  options?: string[] | null
+  answer_key?: unknown
   rubric: { criterion: string }[]
   status: 'draft' | 'published' | 'archived'
+  created_at?: string
+}
+
+export type Assessment = {
+  id: string
+  title: string
+  description: string
+  kind: 'diagnostic' | 'practice' | 'quiz' | 'transfer'
+  status: 'draft' | 'published' | 'archived'
+  question_ids: string[]
   created_at?: string
 }
 
@@ -86,6 +99,7 @@ export type Configuration = {
   database_configured: boolean
   migration_database_configured: boolean
   ai_configured: boolean
+  ai_provider: string | null
   chat_model: string | null
   embedding_model: string | null
   storage_configured: boolean
