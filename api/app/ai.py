@@ -1,3 +1,5 @@
+import json
+
 import httpx
 
 from app.config import settings
@@ -27,7 +29,7 @@ async def request_ai(path: str, payload: dict) -> dict:
         raise AIProviderError("The AI provider request failed") from exc
 
 
-async def embed_texts(texts: list[str]) -> list[list[float]]:
+async def embed_texts(texts: list[str]) -> tuple[list[list[float]], dict]:
     data = await request_ai("embeddings", {"model": settings.ai_embedding_model, "input": texts})
     try:
         rows = data["data"]
@@ -36,10 +38,11 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
         raise AIProviderError("The AI provider returned an invalid embeddings response") from exc
     if any(len(embedding) != 1536 for embedding in embeddings):
         raise AIProviderError("The configured embedding model must return 1536 dimensions")
-    return embeddings
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    return embeddings, usage
 
 
-async def generate_question(context: str) -> str:
+async def generate_question(context: str) -> tuple[str, dict]:
     data = await request_ai("chat/completions", {
         "model": settings.ai_chat_model,
         "temperature": 0.3,
@@ -57,7 +60,45 @@ async def generate_question(context: str) -> str:
         raise AIProviderError("The AI provider returned an invalid question response") from exc
     if not prompt:
         raise AIProviderError("The AI provider returned an empty question")
-    return prompt
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    return prompt, usage
+
+
+async def evaluate_open_response(prompt: str, response: str, rubric: list[dict]) -> tuple[int, str, dict]:
+    criteria = "\n".join(f"- {item['criterion']}" for item in rubric)
+    data = await request_ai("chat/completions", {
+        "model": settings.ai_chat_model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": (
+                "Evalúa una respuesta universitaria usando solamente el enunciado y la rúbrica. "
+                "Devuelve JSON con score (entero 0-20), feedback (breve y accionable) y "
+                "conceptual_errors (lista breve). No infieras dominio a largo plazo: esto es solo una "
+                "sugerencia para que el docente la revise."
+            )},
+            {"role": "user", "content": (
+                f"Enunciado:\n{prompt[:8000]}\n\nCriterios:\n{criteria[:6000]}"
+                f"\n\nRespuesta del estudiante:\n{response[:12000]}"
+            )},
+        ],
+    })
+    try:
+        content = data["choices"][0]["message"]["content"]
+        result = json.loads(content)
+        score = result["score"]
+        feedback = result["feedback"]
+        errors = result.get("conceptual_errors", [])
+        if (not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 20
+                or not isinstance(feedback, str) or not isinstance(errors, list)):
+            raise ValueError("Invalid evaluation values")
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
+        raise AIProviderError("The AI provider returned an invalid response evaluation") from exc
+    suggestions = [str(error).strip()[:500] for error in errors[:5] if str(error).strip()]
+    if suggestions:
+        feedback = f"{feedback.strip()}\n\nPosibles errores conceptuales: " + "; ".join(suggestions)
+    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    return score, feedback[:2500], usage
 
 
 async def generate_tutor_reply(messages: list[dict], skill: str, sources: list[dict]) -> tuple[str, dict]:

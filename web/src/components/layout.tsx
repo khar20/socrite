@@ -6,7 +6,8 @@ import { BookOpen, ChevronDown, CircleHelp, ClipboardCheck, FileText, FolderOpen
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import { useAuth } from '../auth-context'
-import type { Course } from '../types'
+import { ChartNoAxesColumn } from 'lucide-react'
+import type { Course, PageResult } from '../types'
 import { Badge, LoadingState } from './ui'
 
 const sections = [
@@ -15,6 +16,7 @@ const sections = [
     { to: 'curriculum', label: 'Estructura académica', icon: Layers3 },
     { to: 'materials', label: 'Materiales de clase', icon: FolderOpen },
     { to: 'students', label: 'Estudiantes', icon: Users },
+    { to: 'analytics', label: 'Analítica', icon: ChartNoAxesColumn },
     { to: 'reviews', label: 'Revisión', icon: ClipboardCheck },
     { to: 'questions', label: 'Banco de preguntas', icon: FileText },
     { to: 'assessments', label: 'Evaluaciones', icon: ClipboardCheck },
@@ -48,11 +50,21 @@ export function AppLayout({ mode = 'teacher' }: { mode?: 'teacher' | 'student' }
   const basePath = isTeacher ? '/teacher' : '/student'
   const navSections = isTeacher ? sections : studentSections
   const coursePath = isTeacher ? 'courses' : 'courses'
-  const { data: courses = [], isLoading } = useQuery({
-    queryKey: [isTeacher ? 'courses' : 'student-courses'],
-    queryFn: () => api<Course[]>(isTeacher ? '/courses' : '/student/courses'),
+  const { data: coursePage, isLoading } = useQuery({
+    queryKey: isTeacher ? ['courses', 'navigation'] : ['student-courses', 'navigation'],
+    queryFn: () => api<PageResult<Course>>(`${isTeacher ? '/courses' : '/student/courses'}?limit=100`),
   })
-  const activeCourse = courses.find((course) => course.id === courseId) || courses[0]
+  const courseList = coursePage?.items || []
+  const needsCourseLookup = Boolean(courseId && !courseList.some((course) => course.id === courseId))
+  const activeCourseQuery = useQuery({
+    queryKey: ['course-navigation-item', mode, courseId],
+    queryFn: () => api<Pick<Course, 'id' | 'title' | 'code'>>(
+      `${isTeacher ? '/courses' : '/student/courses'}/${courseId}`,
+    ),
+    enabled: needsCourseLookup,
+  })
+  const activeCourse = courseList.find((course) => course.id === courseId)
+    || activeCourseQuery.data || courseList[0]
   const closeMenu = () => setMobileOpen(false)
 
   function toggleTheme() {
@@ -71,10 +83,10 @@ export function AppLayout({ mode = 'teacher' }: { mode?: 'teacher' | 'student' }
         <ChevronDown size={15} />
       </button>
       {courseMenu && <div className="course-menu">
-        {courses.map((course) => <button key={course.id} onClick={() => { navigate(`${basePath}/courses/${course.id}`); setCourseMenu(false); closeMenu() }}>
+        {courseList.map((course) => <button key={course.id} onClick={() => { navigate(`${basePath}/courses/${course.id}`); setCourseMenu(false); closeMenu() }}>
           <BookOpen size={15} /><span>{course.title}</span>{course.id === activeCourse?.id && <Badge tone="success">Activo</Badge>}
         </button>)}
-        {!courses.length && <p className="course-menu-empty">{isTeacher ? 'Crea tu primer curso para comenzar.' : 'Únete a un curso para comenzar.'}</p>}
+        {!courseList.length && <p className="course-menu-empty">{isTeacher ? 'Crea tu primer curso para comenzar.' : 'Únete a un curso para comenzar.'}</p>}
         <Link to={`${basePath}/${coursePath}`} onClick={() => { setCourseMenu(false); closeMenu() }}><Layers3 size={15} />{isTeacher ? 'Gestionar cursos' : 'Ver mis cursos'}</Link>
       </div>}
     </div>
@@ -91,6 +103,7 @@ export function AppLayout({ mode = 'teacher' }: { mode?: 'teacher' | 'student' }
       </div>)}
       {isTeacher && <NavLink to="/teacher/courses" onClick={closeMenu} className={({ isActive }) => `nav-link${isActive && !courseId ? ' is-active' : ''}`}><Layers3 size={18} /><span>Cursos</span></NavLink>}
       {profile?.role === 'admin' && <NavLink to="/teacher/admin/students" onClick={closeMenu} className={({ isActive }) => `nav-link${isActive ? ' is-active' : ''}`}><Users size={18} /><span>Correos autorizados</span></NavLink>}
+      {profile?.role === 'admin' && <NavLink to="/teacher/admin/users" onClick={closeMenu} className={({ isActive }) => `nav-link${isActive ? ' is-active' : ''}`}><ShieldCheck size={18} /><span>Cuentas</span></NavLink>}
     </nav>
     <div className="sidebar-footer">
       <div className="profile-row"><div className="avatar">{(profile?.full_name || profile?.email || 'U').slice(0, 1).toUpperCase()}</div><Link className="profile-copy" to={`${basePath}/account`}><strong>{profile?.full_name || (isTeacher ? 'Docente' : 'Estudiante')}</strong><span>{profile?.email}</span></Link><button className="icon-button" onClick={() => void signOut()} title="Cerrar sesión" aria-label="Cerrar sesión"><LogOut size={16} /></button></div>

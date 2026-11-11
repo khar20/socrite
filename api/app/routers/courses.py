@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,13 +21,17 @@ async def owned_course(course_id: str, teacher: User, db: AsyncSession) -> Cours
 
 @router.get("/courses")
 async def list_courses(
+    limit: int = Query(default=25, ge=1, le=100), offset: int = Query(default=0, ge=0),
     teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
-) -> list[dict]:
-    result = await db.execute(select(Course).where(Course.owner_id == teacher.id).order_by(Course.updated_at.desc()))
+) -> dict:
+    course_filter = Course.owner_id == teacher.id
+    total = await db.scalar(select(func.count(Course.id)).where(course_filter)) or 0
+    result = await db.execute(select(Course).where(course_filter)
+                              .order_by(Course.updated_at.desc()).limit(limit).offset(offset))
     courses = result.scalars().all()
     course_ids = [course.id for course in courses]
     if not course_ids:
-        return []
+        return {"items": [], "total": total, "limit": limit, "offset": offset}
     unit_counts = dict((await db.execute(
         select(Unit.course_id, func.count(Unit.id)).where(Unit.course_id.in_(course_ids))
         .group_by(Unit.course_id)
@@ -46,7 +50,7 @@ async def list_courses(
         items.append({**CourseOut.model_validate(course).model_dump(), "unit_count": unit_counts.get(course.id, 0),
                       "material_count": material_counts.get(course.id, 0),
                       "student_count": student_counts.get(course.id, 0)})
-    return items
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.post("/courses", response_model=CourseOut, status_code=201)

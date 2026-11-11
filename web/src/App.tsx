@@ -17,6 +17,8 @@ import { StudentDashboardPage, StudentCoursePage, StudentCurriculumPage, Student
 import { AssessmentsPage } from './pages/Assessments'
 import { AccountPage } from './pages/Account'
 import { StudentAllowlistPage } from './pages/StudentAllowlist'
+import { AdminUsersPage } from './pages/AdminUsers'
+import { CourseAnalyticsPage } from './pages/CourseAnalytics'
 
 function ProtectedLayout({ role }: { role: 'teacher' | 'student' }) {
   const { profile, loading } = useAuth()
@@ -48,6 +50,7 @@ export default function App() {
       <Route path="courses/:courseId/curriculum" element={<CurriculumPage />} />
       <Route path="courses/:courseId/materials" element={<MaterialsPage />} />
       <Route path="courses/:courseId/students" element={<StudentsPage />} />
+      <Route path="courses/:courseId/analytics" element={<CourseAnalyticsPage />} />
       <Route path="courses/:courseId/reviews" element={<ReviewsPage />} />
       <Route path="courses/:courseId/questions" element={<QuestionsPage />} />
       <Route path="courses/:courseId/assessments" element={<AssessmentsPage />} />
@@ -56,6 +59,7 @@ export default function App() {
       <Route path="activity" element={<ActivityPage />} />
       <Route path="account" element={<AccountPage />} />
       <Route path="admin/students" element={profile?.role === 'admin' ? <StudentAllowlistPage /> : <AccessDenied />} />
+      <Route path="admin/users" element={profile?.role === 'admin' ? <AdminUsersPage /> : <AccessDenied />} />
     </Route>
     <Route path="/student" element={<ProtectedLayout role="student" />}>
       <Route index element={<StudentDashboardPage />} />

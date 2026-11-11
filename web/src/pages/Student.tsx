@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, BookOpen, Check, ClipboardCheck, FileText, Layers3, MessageCircle, Repeat2, Send, Target, Users } from 'lucide-react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, jsonBody } from '../api'
-import type { Course, CurriculumUnit } from '../types'
-import { Badge, Button, Card, EmptyState, ErrorState, Field, LoadingState, PageHeader, Select, Stat, TextArea, TextInput, useToast } from '../components/ui'
+import type { Course, CurriculumUnit, PageResult } from '../types'
+import { Badge, Button, Card, EmptyState, ErrorState, Field, LoadingState, PageHeader, PaginationControls, Select, Stat, TextArea, TextInput, useToast } from '../components/ui'
 
 type StudentMaterial = {
   id: string; name: string; kind: 'file' | 'link'; content_type: string; size_bytes: number
@@ -12,7 +12,15 @@ type StudentMaterial = {
 }
 type StudentCourse = Pick<Course, 'id' | 'title' | 'code' | 'description' | 'status' | 'credits' |
   'academic_period' | 'created_at' | 'unit_count' | 'material_count'>
+type StudentCoursesPage = PageResult<StudentCourse> & {
+  summary: { course_count: number; active_course_count: number; material_count: number }
+}
 type Assessment = { id: string; title: string; description: string; kind: string; question_count: number }
+type Recommendation = {
+  skill: { id: string; title: string; unit: string; probability: number | null; observations: number; due_at: string | null } | null
+  activity: { id: string; title: string; kind: string; question_count: number; predicted_success: number } | null
+  reason: string
+}
 type AttemptQuestion = {
   id: string; prompt: string; question_type: 'open' | 'multiple_choice' | 'numeric'
   options: string[] | null; points: number; response: unknown; is_correct: boolean | null; pending_review: boolean
@@ -23,6 +31,12 @@ type AssessmentAttempt = {
 type ProgressData = {
   mastery: { skill_id: string; skill: string; unit: string; probability: number; observations: number; last_evidence_at: string | null }[]
   reviews: { skill_id: string; due_at: string; interval_days: number; repetitions: number }[]
+  retention: { due_count: number; review_events: number; on_time_reviews: number; average_self_rating: number | null
+    history: { skill_id: string; skill: string; unit: string; rating: number; due_at: string; completed_at: string }[] }
+  transfer: { attempts: number; average_score_percent: number | null
+    history: { assessment_id: string; title: string; score: number | null; possible_score: number | null; submitted_at: string | null }[] }
+  evidence_history: { skill_id: string; skill: string; unit: string; evidence_type: string; is_correct: boolean
+    is_transfer: boolean; confidence: number | null; probability_before: number; probability_after: number; created_at: string }[]
 }
 type TutorSessionInfo = { id: string; skill_id: string | null; status: string; started_at: string }
 type TutorSessions = { ai_configured: boolean; sessions: TutorSessionInfo[] }
@@ -33,21 +47,27 @@ type TutorMessageInfo = {
 }
 
 export function StudentDashboardPage() {
-  const courses = useQuery({ queryKey: ['student-courses'], queryFn: () => api<StudentCourse[]>('/student/courses') })
+  const [offset, setOffset] = useState(0)
+  const limit = 25
+  const courses = useQuery({
+    queryKey: ['student-courses', offset],
+    queryFn: () => api<StudentCoursesPage>(`/student/courses?limit=${limit}&offset=${offset}`),
+  })
   if (courses.isLoading) return <LoadingState />
   if (courses.isError) return <ErrorState message="No pudimos cargar tus cursos." retry={() => void courses.refetch()} />
-  const list = courses.data!
+  const list = courses.data!.items
   return <>
     <PageHeader title="Mi aprendizaje" description="Retoma tus cursos, revisa tus actividades y continúa a tu ritmo." />
     <div className="stats-grid stats-grid-compact">
-      <Stat icon={BookOpen} label="Mis cursos" value={list.length} detail="cursos a los que tienes acceso" />
-      <Stat icon={Layers3} label="Materiales disponibles" value={list.reduce((total, course) => total + course.material_count, 0)} detail="recursos compartidos por tus docentes" />
-      <Stat icon={ClipboardCheck} label="Cursos activos" value={list.filter((course) => course.status === 'active').length} detail="listos para continuar" />
+      <Stat icon={BookOpen} label="Mis cursos" value={courses.data!.summary.course_count} detail="cursos a los que tienes acceso" />
+      <Stat icon={Layers3} label="Materiales disponibles" value={courses.data!.summary.material_count} detail="recursos compartidos por tus docentes" />
+      <Stat icon={ClipboardCheck} label="Cursos activos" value={courses.data!.summary.active_course_count} detail="listos para continuar" />
     </div>
     <Card className="student-courses-card"><div className="card-heading"><h2>Tus cursos</h2><p className="muted-text text-small">Elige un curso para continuar aprendiendo.</p></div>
-      <div className="card-content student-course-list">{list.length ? list.map((course) => <Link className="student-course-row" to={`/student/courses/${course.id}`} key={course.id}>
+      <div className="card-content student-course-list">{courses.data!.total ? list.map((course) => <Link className="student-course-row" to={`/student/courses/${course.id}`} key={course.id}>
         <span className="course-row-icon"><BookOpen size={19} /></span><span className="course-row-copy"><strong>{course.title}</strong><small>{course.code || 'Sin código'} · {course.unit_count} unidades · {course.material_count} materiales</small></span><Badge tone={course.status === 'active' ? 'success' : 'neutral'}>{course.status === 'active' ? 'Activo' : 'En preparación'}</Badge><ArrowRight size={16} />
       </Link>) : <EmptyState icon={BookOpen} title="Aún no tienes cursos" description="Pide a tu docente un enlace de invitación para unirte a un curso." />}</div>
+      <div className="card-content"><PaginationControls total={courses.data!.total} limit={limit} offset={offset} onChange={setOffset} /></div>
     </Card>
   </>
 }
@@ -66,14 +86,25 @@ export function StudentJoinPage() {
 
 export function StudentCoursePage() {
   const { courseId = '' } = useParams()
+  const navigate = useNavigate()
   const course = useQuery({ queryKey: ['student-course', courseId], queryFn: () => api<StudentCourse>(`/student/courses/${courseId}`) })
   const curriculum = useQuery({ queryKey: ['student-curriculum', courseId], queryFn: () => api<CurriculumUnit[]>(`/student/courses/${courseId}/curriculum`) })
   const assessments = useQuery({ queryKey: ['student-assessments', courseId], queryFn: () => api<Assessment[]>(`/student/courses/${courseId}/assessments`) })
+  const recommendation = useQuery({
+    queryKey: ['student-next-activity', courseId],
+    queryFn: () => api<Recommendation>(`/student/courses/${courseId}/next-activity`),
+  })
+  const startRecommended = useMutation({
+    mutationFn: (assessmentId: string) => api<AssessmentAttempt>(`/student/assessments/${assessmentId}/attempts`, { method: 'POST' }),
+    onSuccess: (attempt) => navigate(`/student/attempts/${attempt.id}`),
+  })
   if (course.isLoading || curriculum.isLoading || assessments.isLoading) return <LoadingState />
   if (course.isError || curriculum.isError || assessments.isError) return <ErrorState message="No pudimos cargar el curso." retry={() => { void course.refetch(); void curriculum.refetch(); void assessments.refetch() }} />
   const item = course.data!
   return <>
     <PageHeader title={item.title} description={`${item.code || 'Curso'}${item.academic_period ? ` · ${item.academic_period}` : ''}`} />
+    {recommendation.data && <Card className="next-activity-card"><div className="next-activity-content"><div className="next-activity-copy"><Badge tone={recommendation.data.activity?.kind === 'diagnostic' ? 'info' : 'neutral'}>{recommendation.data.activity?.kind === 'diagnostic' ? 'Conocimientos previos' : recommendation.data.activity?.kind === 'transfer' ? 'Aplicación nueva' : 'Siguiente paso'}</Badge><h2>{recommendation.data.activity?.title || 'Una habilidad para trabajar'}</h2>{recommendation.data.skill && <p className="next-activity-skill">{recommendation.data.skill.unit} · {recommendation.data.skill.title}{recommendation.data.skill.probability !== null && ` · dominio estimado ${Math.round(recommendation.data.skill.probability * 100)}%`}</p>}<p>{recommendation.data.reason}</p>{recommendation.data.activity && <small>{recommendation.data.activity.question_count} preguntas · dificultad ajustada a tu nivel (IRT {Math.round(recommendation.data.activity.predicted_success * 100)}% de éxito esperado)</small>}{recommendation.data.skill && <small>{recommendation.data.skill.observations} evidencias registradas</small>}</div>{recommendation.data.activity ? <Button className="next-activity-action" disabled={startRecommended.isPending} onClick={() => startRecommended.mutate(recommendation.data!.activity!.id)}>{startRecommended.isPending ? 'Preparando…' : 'Empezar actividad'}<ArrowRight size={15} /></Button> : <Link className="button button-outline next-activity-action" to={`/student/courses/${courseId}/curriculum`}>Revisar habilidades</Link>}</div></Card>}
+    {startRecommended.isError && <div className="inline-alert alert-error" role="alert">{startRecommended.error.message}</div>}
     <Card className="student-course-intro"><div className="student-course-mark"><BookOpen size={22} /></div><div><Badge tone={item.status === 'active' ? 'success' : 'warning'}>{item.status === 'active' ? 'En curso' : 'En preparación'}</Badge><h2>{item.description || 'Tu espacio de aprendizaje está listo.'}</h2><p>{item.credits} créditos · {item.unit_count} unidades · {item.material_count} materiales</p></div></Card>
     <div className="student-shortcuts">
       <Link to={`/student/courses/${courseId}/curriculum`}><Layers3 size={19} /><span><strong>Ruta de aprendizaje</strong><small>Unidades, temas y habilidades</small></span><ArrowRight size={15} /></Link>
@@ -109,7 +140,12 @@ export function StudentCurriculumPage() {
 export function StudentMaterialsPage() {
   const { courseId = '' } = useParams()
   const toast = useToast()
-  const materials = useQuery({ queryKey: ['student-materials', courseId], queryFn: () => api<StudentMaterial[]>(`/student/courses/${courseId}/materials`) })
+  const [offset, setOffset] = useState(0)
+  const limit = 25
+  const materials = useQuery({
+    queryKey: ['student-materials', courseId, offset],
+    queryFn: () => api<PageResult<StudentMaterial>>(`/student/courses/${courseId}/materials?limit=${limit}&offset=${offset}`),
+  })
   async function openMaterial(material: StudentMaterial) {
     try {
       const { url } = await api<{ url: string }>(`/student/materials/${material.id}/download-url`)
@@ -118,7 +154,7 @@ export function StudentMaterialsPage() {
   }
   if (materials.isLoading) return <LoadingState />
   if (materials.isError) return <ErrorState message="No pudimos cargar los materiales." retry={() => void materials.refetch()} />
-  return <><PageHeader title="Materiales de clase" description="Recursos que tu docente ha compartido para el curso." /><Card><div className="materials-list">{materials.data!.length ? materials.data!.map((material) => <button className="student-material-row" key={material.id} onClick={() => void openMaterial(material)}><span className="file-type-mark">{material.kind === 'link' ? 'URL' : material.name.split('.').pop()?.toUpperCase()}</span><span className="material-copy"><strong>{material.name}</strong><small>{material.kind === 'link' ? 'Enlace externo' : `${Math.ceil(material.size_bytes / 1024)} KB · ${material.chunk_count} fragmentos`}</small></span><ArrowRight size={16} /></button>) : <EmptyState icon={FileText} title="Aún no hay materiales" description="Los documentos y enlaces del curso aparecerán aquí cuando tu docente los comparta." />}</div></Card></>
+  return <><PageHeader title="Materiales de clase" description="Recursos que tu docente ha compartido para el curso." /><Card><div className="materials-list">{materials.data!.items.length ? materials.data!.items.map((material) => <button className="student-material-row" key={material.id} onClick={() => void openMaterial(material)}><span className="file-type-mark">{material.kind === 'link' ? 'URL' : material.name.split('.').pop()?.toUpperCase()}</span><span className="material-copy"><strong>{material.name}</strong><small>{material.kind === 'link' ? 'Enlace externo' : `${Math.ceil(material.size_bytes / 1024)} KB · ${material.chunk_count} fragmentos`}</small></span><ArrowRight size={16} /></button>) : <EmptyState icon={FileText} title="Aún no hay materiales" description="Los documentos y enlaces del curso aparecerán aquí cuando tu docente los comparta." />}</div></Card><PaginationControls total={materials.data!.total} limit={limit} offset={offset} onChange={setOffset} /></>
 }
 
 export function StudentAssessmentsPage() {
@@ -138,19 +174,22 @@ export function StudentAssessmentsPage() {
 
 export function StudentFeedbackPage() {
   const { courseId = '' } = useParams()
+  const [offset, setOffset] = useState(0)
+  const limit = 25
   const submissions = useQuery({
-    queryKey: ['student-submissions', courseId],
-    queryFn: () => api<{ id: string; question: string; response: string; suggested_score: number | null;
-      final_score: number | null; teacher_comment: string | null; status: 'pending' | 'reviewed'; created_at: string }[]>(
-      `/student/courses/${courseId}/submissions`,
+    queryKey: ['student-submissions', courseId, offset],
+    queryFn: () => api<PageResult<{ id: string; question: string; response: string; suggested_score: number | null;
+      final_score: number | null; teacher_comment: string | null; status: 'pending' | 'reviewed'; created_at: string }>>(
+      `/student/courses/${courseId}/submissions?limit=${limit}&offset=${offset}`,
     ),
   })
   if (submissions.isLoading) return <LoadingState />
   if (submissions.isError) return <ErrorState message="No pudimos cargar tus entregas." retry={() => void submissions.refetch()} />
-  const items = submissions.data!
+  const items = submissions.data!.items
   return <>
     <PageHeader title="Retroalimentación" description="Revisa comentarios y notas confirmadas por tu docente. Las sugerencias automáticas no son la nota final." />
-    {!items.length ? <Card><EmptyState icon={FileText} title="Aún no tienes entregas" description="Cuando envíes una respuesta abierta, su estado y revisión aparecerán aquí." /></Card> : <div className="feedback-list">{items.map((item) => <Card key={item.id}><div className="feedback-heading"><div><h2>{item.question}</h2><p className="muted-text text-small">Enviada {new Date(item.created_at).toLocaleDateString('es')}</p></div><Badge tone={item.status === 'reviewed' ? 'success' : 'warning'}>{item.status === 'reviewed' ? 'Revisada' : 'Pendiente de revisión'}</Badge></div><div className="feedback-response"><strong>Tu respuesta</strong><p>{item.response}</p></div>{item.status === 'reviewed' ? <div className="feedback-result"><strong>Nota final: {item.final_score ?? '—'}/20</strong>{item.teacher_comment && <p>{item.teacher_comment}</p>}</div> : item.suggested_score !== null && <p className="muted-text text-small">Sugerencia automática: {item.suggested_score}/20 · pendiente de confirmación docente.</p>}</Card>)}</div>}
+    {!submissions.data!.total ? <Card><EmptyState icon={FileText} title="Aún no tienes entregas" description="Cuando envíes una respuesta abierta, su estado y revisión aparecerán aquí." /></Card> : <div className="feedback-list">{items.map((item) => <Card key={item.id}><div className="feedback-heading"><div><h2>{item.question}</h2><p className="muted-text text-small">Enviada {new Date(item.created_at).toLocaleDateString('es')}</p></div><Badge tone={item.status === 'reviewed' ? 'success' : 'warning'}>{item.status === 'reviewed' ? 'Revisada' : 'Pendiente de revisión'}</Badge></div><div className="feedback-response"><strong>Tu respuesta</strong><p>{item.response}</p></div>{item.status === 'reviewed' ? <div className="feedback-result"><strong>Nota final: {item.final_score ?? '—'}/20</strong>{item.teacher_comment && <p>{item.teacher_comment}</p>}</div> : item.suggested_score !== null && <p className="muted-text text-small">Sugerencia automática: {item.suggested_score}/20 · pendiente de confirmación docente.</p>}</Card>)}</div>}
+    <PaginationControls total={submissions.data!.total} limit={limit} offset={offset} onChange={setOffset} />
   </>
 }
 
@@ -211,21 +250,29 @@ export function StudentProgressPage() {
   if (progress.isError || reflections.isError) return <ErrorState message="No pudimos cargar tu progreso." retry={() => { void progress.refetch(); void reflections.refetch() }} />
   const data = progress.data!
   return <><PageHeader title="Mi progreso" description="El dominio es una estimación basada en respuestas y revisiones, no una calificación definitiva." />
-    <div className="stats-grid stats-grid-compact"><Stat icon={Target} label="Habilidades con evidencia" value={data.mastery.length} detail="basadas en tus respuestas" /><Stat icon={Repeat2} label="Repasos programados" value={data.reviews.length} detail="habilidades en tu agenda" /></div>
+    <div className="stats-grid stats-grid-compact"><Stat icon={Target} label="Habilidades con evidencia" value={data.mastery.length} detail="basadas en tus respuestas" /><Stat icon={Repeat2} label="Repasos vencidos" value={data.retention.due_count} detail={`${data.reviews.length} habilidades en tu agenda`} /><Stat icon={ClipboardCheck} label="Pruebas de transferencia" value={data.transfer.attempts} detail={data.transfer.average_score_percent === null ? 'sin evaluaciones completadas' : `${Math.round(data.transfer.average_score_percent)}% promedio`} /></div>
     <Card className="student-progress-card"><div className="card-heading"><h2>Dominio por habilidad</h2></div><div className="card-content">{data.mastery.length ? data.mastery.map((item) => <div className="mastery-row" key={item.skill_id}><div><strong>{item.skill}</strong><small>{item.unit} · {item.observations} evidencias</small></div><div className="student-mastery"><div className="progress-track"><i style={{ width: `${Math.round(item.probability * 100)}%` }} /></div><small>{Math.round(item.probability * 100)}%</small></div></div>) : <EmptyState icon={Target} title="Aún no hay evidencia de aprendizaje" description="Completa una actividad para comenzar a ver estimaciones de dominio." />}</div></Card>
-    <Card className="student-progress-card"><div className="card-heading"><h2>Repasos espaciados</h2><p className="muted-text text-small">Después de cada repaso, indica qué tan fácil fue recordar.</p></div><div className="card-content">{data.reviews.length ? data.reviews.map((item) => <div className="review-schedule-row" key={item.skill_id}><div><strong>{data.mastery.find((skill) => skill.skill_id === item.skill_id)?.skill || 'Habilidad'}</strong><small>Próximo repaso: {new Date(item.due_at).toLocaleDateString('es')}</small></div><div className="review-rating">{[['Otra vez', 0], ['Difícil', 1], ['Bien', 2], ['Fácil', 3]].map(([label, rating]) => <button key={rating} disabled={rate.isPending} onClick={() => rate.mutate({ skillId: item.skill_id, rating: Number(rating) })}>{label}</button>)}</div></div>) : <EmptyState icon={Repeat2} title="No tienes repasos programados" description="Los repasos se agregarán después de que demuestres conocimientos en una habilidad." />}</div></Card>
+     <Card className="student-progress-card"><div className="card-heading"><h2>Repasos espaciados</h2><p className="muted-text text-small">Después de intentar recuperar la idea, registra qué tan fácil fue recordarla. Es una autoevaluación, no una calificación.</p></div><div className="card-content">{data.reviews.length ? data.reviews.map((item) => { const due = new Date(item.due_at) <= new Date(); return <div className="review-schedule-row" key={item.skill_id}><div><strong>{data.mastery.find((skill) => skill.skill_id === item.skill_id)?.skill || 'Habilidad'}</strong><small>{due ? 'Vencido · ' : 'Próximo repaso · '}{new Date(item.due_at).toLocaleDateString('es')}</small></div><div className="review-rating">{[['Otra vez', 0], ['Difícil', 1], ['Bien', 2], ['Fácil', 3]].map(([label, rating]) => <button key={rating} disabled={rate.isPending} onClick={() => rate.mutate({ skillId: item.skill_id, rating: Number(rating) })}>{label}</button>)}</div></div>}) : <EmptyState icon={Repeat2} title="No tienes repasos programados" description="Los repasos se agregarán después de que demuestres conocimientos en una habilidad." />}</div></Card>
+     <Card className="student-progress-card"><div className="card-heading"><h2>Retención y transferencia</h2><p className="muted-text text-small">Las pruebas de transferencia verifican si puedes aplicar la idea en una situación nueva.</p></div><div className="card-content progress-report-grid"><div><strong>{data.retention.on_time_reviews}</strong><span>autoevaluaciones después de un repaso vencido</span><small>{data.retention.average_self_rating === null ? 'Aún no hay valoraciones' : `Facilidad media ${data.retention.average_self_rating.toFixed(1)} de 3`}</small></div><div><strong>{data.transfer.attempts}</strong><span>evaluaciones de transferencia completadas</span><small>{data.transfer.average_score_percent === null ? 'Sin resultados disponibles' : `${Math.round(data.transfer.average_score_percent)}% del puntaje posible`}</small></div></div>{data.evidence_history.length > 0 && <div className="card-content evidence-history"><h3>Últimas evidencias</h3>{data.evidence_history.slice(0, 10).map((event, index) => <div className="evidence-history-row" key={`${event.skill_id}-${event.created_at}-${index}`}><div><strong>{event.skill}</strong><small>{event.unit} · {event.is_transfer ? 'Transferencia' : event.evidence_type === 'teacher_review' ? 'Revisión docente' : 'Recuperación activa'}</small></div><Badge tone={event.is_correct ? 'success' : 'warning'}>{event.is_correct ? 'Correcta' : 'Por reforzar'}</Badge><span className="evidence-change">{Math.round(event.probability_before * 100)}% → {Math.round(event.probability_after * 100)}%</span></div>)}</div>}</Card>
     <Card className="student-progress-card"><div className="card-heading"><h2>Diario de reflexión</h2><p className="muted-text text-small">Piensa qué te resultó difícil y qué intentarás después.</p></div><div className="card-content"><Field label="Tu reflexión"><TextArea rows={3} value={reflection} onChange={(event) => setReflection(event.target.value)} maxLength={10000} placeholder="Escribe una estrategia que quieras probar…" /></Field><Button onClick={() => saveReflection.mutate()} disabled={!reflection.trim() || saveReflection.isPending}>Guardar reflexión</Button>{reflections.data!.map((item) => <div className="reflection-entry" key={item.id}><small>{new Date(item.created_at).toLocaleString('es')}</small><p>{item.body}</p></div>)}</div></Card>
   </>
 }
 
 export function StudentTutorPage() {
   const { courseId = '' } = useParams()
+  const [searchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const toast = useToast()
   const [sessionId, setSessionId] = useState('')
   const [skillId, setSkillId] = useState('')
   const [message, setMessage] = useState('')
   const curriculum = useQuery({ queryKey: ['student-curriculum', courseId], queryFn: () => api<CurriculumUnit[]>(`/student/courses/${courseId}/curriculum`) })
+  const requestedSkillId = searchParams.get('skill_id')
+  useEffect(() => {
+    if (requestedSkillId && curriculum.data?.some((unit) => unit.skills.some((skill) => skill.id === requestedSkillId))) {
+      setSkillId(requestedSkillId)
+    }
+  }, [requestedSkillId, curriculum.data])
   const sessions = useQuery({ queryKey: ['tutor-sessions', courseId], queryFn: () => api<TutorSessions>(`/student/courses/${courseId}/tutor/sessions`) })
   useEffect(() => {
     if (!sessionId && sessions.data?.sessions.length) setSessionId(sessions.data.sessions[0].id)

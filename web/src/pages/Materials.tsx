@@ -3,8 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowDownToLine, BookOpen, Check, FileText, Folder, FolderPlus, Link2, MoreHorizontal, Pencil, RotateCw, Sparkles, Trash2, UploadCloud, X } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import { api, jsonBody } from '../api'
-import type { Configuration, CurriculumUnit, Folder as MaterialFolder, Material } from '../types'
-import { Badge, Button, Card, EmptyState, ErrorState, Field, LoadingState, Modal, PageHeader, Select, TextInput, useToast } from '../components/ui'
+import type { Configuration, CurriculumUnit, Folder as MaterialFolder, Material, PageResult } from '../types'
+import { Badge, Button, Card, EmptyState, ErrorState, Field, LoadingState, Modal, PageHeader, PaginationControls, Select, TextInput, useToast } from '../components/ui'
 
 type UploadItem = { id: string; name: string; progress: number; status: 'uploading' | 'ready' | 'failed'; error?: string }
 type UploadTicket = { material_id: string; upload_url: string; headers: Record<string, string> }
@@ -40,6 +40,8 @@ export function MaterialsPage() {
   const inputRef = useRef<HTMLInputElement>(null)
   const [folderId, setFolderId] = useState('all')
   const [search, setSearch] = useState('')
+  const [offset, setOffset] = useState(0)
+  const limit = 25
   const [uploadOpen, setUploadOpen] = useState(false)
   const [linkOpen, setLinkOpen] = useState(false)
   const [folderOpen, setFolderOpen] = useState(false)
@@ -58,19 +60,24 @@ export function MaterialsPage() {
 
   const foldersQuery = useQuery({ queryKey: ['folders', courseId], queryFn: () => api<MaterialFolder[]>(`/courses/${courseId}/folders`) })
   const query = useQuery({
-    queryKey: ['materials', courseId, folderId, search],
+    queryKey: ['materials', courseId, folderId, search, offset],
     queryFn: () => {
       const params = new URLSearchParams()
       if (folderId !== 'all') params.set('folder_id', folderId)
       if (search) params.set('search', search)
-      return api<Material[]>(`/courses/${courseId}/materials${params.size ? `?${params}` : ''}`)
+      params.set('limit', String(limit))
+      params.set('offset', String(offset))
+      return api<PageResult<Material>>(`/courses/${courseId}/materials?${params}`)
     },
+    refetchInterval: (current) => current.state.data?.items.some((item) =>
+      ['queued', 'processing', 'deleting'].includes(item.status),
+    ) ? 5000 : false,
   })
   const curriculum = useQuery({ queryKey: ['curriculum', courseId], queryFn: () => api<CurriculumUnit[]>(`/courses/${courseId}/curriculum`) })
   const configuration = useQuery({ queryKey: ['configuration'], queryFn: () => api<Configuration>('/configuration') })
   const folders = foldersQuery.data || []
   const units = curriculum.data || []
-  const materials = query.data || []
+  const materials = query.data?.items || []
 
   async function upload(files: FileList | File[]) {
     const items = Array.from(files)
@@ -146,11 +153,11 @@ export function MaterialsPage() {
   async function removeMaterial(material: Material) {
     if (!window.confirm(`¿Eliminar “${material.name}”? Esta acción no se puede deshacer.`)) return
     try {
-      await api(`/materials/${material.id}`, { method: 'DELETE' })
+      const result = await api<{ status?: string }>(`/materials/${material.id}`, { method: 'DELETE' })
       await queryClient.invalidateQueries({ queryKey: ['materials', courseId] })
       await queryClient.invalidateQueries({ queryKey: ['folders', courseId] })
       await queryClient.invalidateQueries({ queryKey: ['course', courseId] })
-      toast('Material eliminado.')
+      toast(result?.status === 'deleting' ? 'Eliminación programada; el material desaparecerá cuando se confirme en el almacenamiento.' : 'Material eliminado.')
     } catch (error) { toast(error instanceof Error ? error.message : 'No se pudo eliminar.', 'error') }
   }
 
@@ -214,14 +221,15 @@ export function MaterialsPage() {
     {!configuration.data!.ai_configured && <div className="inline-alert alert-info"><Sparkles size={17} /><span>La extracción de texto funciona sin IA. Configura el proveedor para generar embeddings y borradores de preguntas.</span></div>}
     <div className="materials-layout">
       <Card className="materials-folder-sidebar"><div className="card-heading card-heading-row"><h2>Carpetas</h2><Button variant="ghost" size="small" aria-label="Nueva carpeta" onClick={() => { setEditingFolder(null); setNewFolder(''); setFolderOpen(true) }}><FolderPlus size={16} /></Button></div><div className="folder-list">
-        <button className={`folder-button${folderId === 'all' ? ' is-active' : ''}`} onClick={() => setFolderId('all')}><Layers3Icon />Todo el curso<span>{folders.reduce((sum, folder) => sum + folder.count, 0)}</span></button>
-        {folders.map((folder) => <FolderRow key={folder.id} folder={folder} selected={folderId === folder.id} onSelect={() => setFolderId(folder.id)} onEdit={() => { setEditingFolder(folder); setNewFolder(folder.name); setFolderOpen(true) }} onDelete={() => void removeFolder(folder)} />)}
+         <button className={`folder-button${folderId === 'all' ? ' is-active' : ''}`} onClick={() => { setFolderId('all'); setOffset(0) }}><Layers3Icon />Todo el curso<span>{folders.reduce((sum, folder) => sum + folder.count, 0)}</span></button>
+         {folders.map((folder) => <FolderRow key={folder.id} folder={folder} selected={folderId === folder.id} onSelect={() => { setFolderId(folder.id); setOffset(0) }} onEdit={() => { setEditingFolder(folder); setNewFolder(folder.name); setFolderOpen(true) }} onDelete={() => void removeFolder(folder)} />)}
       </div></Card>
       <section className="materials-main">
-        <div className="materials-toolbar"><div><h2>{folderId === 'all' ? 'Todos los materiales' : currentFolder?.name || 'Carpeta'}</h2><p className="muted-text text-small">{materials.length} recurso{materials.length === 1 ? '' : 's'}{folderId === 'all' ? ' en este curso' : ' en esta carpeta'}</p></div><div className="materials-search"><TextInput type="search" aria-label="Buscar material" placeholder="Buscar materiales…" value={search} onChange={(event) => setSearch(event.target.value)} /></div></div>
+         <div className="materials-toolbar"><div><h2>{folderId === 'all' ? 'Todos los materiales' : currentFolder?.name || 'Carpeta'}</h2><p className="muted-text text-small">{query.data?.total || 0} recurso{query.data?.total === 1 ? '' : 's'}{folderId === 'all' ? ' en este curso' : ' en esta carpeta'}</p></div><div className="materials-search"><TextInput type="search" aria-label="Buscar material" placeholder="Buscar materiales…" value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0) }} /></div></div>
         <Card><div className="materials-list">
-        {!materials.length ? <EmptyState icon={FileText} title={search ? 'No hay resultados' : folderId === 'all' ? 'Todavía no hay materiales' : 'Esta carpeta está vacía'} description={search ? 'Prueba con otra búsqueda.' : 'Sube apuntes, guías o presentaciones, o agrega un enlace de referencia.'} action={!search && <div className="empty-actions"><Button onClick={() => { setUploadFolder(folderId === 'all' ? '' : folderId); setUploadOpen(true); setTimeout(() => inputRef.current?.click(), 0) }}><UploadCloud size={15} />Subir archivos</Button><Button variant="outline" onClick={() => setLinkOpen(true)}><Link2 size={15} />Añadir enlace</Button></div>} /> : materials.map((material) => <MaterialRow key={material.id} material={material} onOpen={() => void openFile(material)} onEdit={() => { setEditing(material); setEditName(material.name); setEditFolder(material.folder_id || '') }} onDelete={() => void removeMaterial(material)} onRetry={() => void retry(material)} onGenerate={() => void generateQuestion(material)} onDownload={() => void downloadMaterial(material)} aiReady={configuration.data!.ai_configured} />)}
-        </div></Card>
+         {!materials.length ? <EmptyState icon={FileText} title={search ? 'No hay resultados' : query.data!.total ? 'No hay materiales en esta página' : folderId === 'all' ? 'Todavía no hay materiales' : 'Esta carpeta está vacía'} description={search ? 'Prueba con otra búsqueda.' : 'Sube apuntes, guías o presentaciones, o agrega un enlace de referencia.'} action={!search && query.data!.total === 0 && <div className="empty-actions"><Button onClick={() => { setUploadFolder(folderId === 'all' ? '' : folderId); setUploadOpen(true); setTimeout(() => inputRef.current?.click(), 0) }}><UploadCloud size={15} />Subir archivos</Button><Button variant="outline" onClick={() => setLinkOpen(true)}><Link2 size={15} />Añadir enlace</Button></div>} /> : materials.map((material) => <MaterialRow key={material.id} material={material} onOpen={() => void openFile(material)} onEdit={() => { setEditing(material); setEditName(material.name); setEditFolder(material.folder_id || '') }} onDelete={() => void removeMaterial(material)} onRetry={() => void retry(material)} onGenerate={() => void generateQuestion(material)} onDownload={() => void downloadMaterial(material)} aiReady={configuration.data!.ai_configured} />)}
+         </div></Card>
+         <PaginationControls total={query.data!.total} limit={limit} offset={offset} onChange={setOffset} />
         <p className="materials-help">PDF, DOCX, PPTX y TXT · máximo {configuration.data!.max_upload_mb} MB por archivo. Los enlaces se abren en una pestaña nueva.</p>
       </section>
     </div>
@@ -271,10 +279,10 @@ function MaterialRow({ material, onOpen, onEdit, onDelete, onRetry, onGenerate, 
   const [menuOpen, setMenuOpen] = useState(false)
   const status = material.status === 'ready' ? { tone: 'success' as const, label: 'Listo' }
     : material.status === 'failed' ? { tone: 'danger' as const, label: 'Error' }
-      : { tone: 'warning' as const, label: material.status === 'queued' ? 'En cola' : material.status === 'processing' ? 'Procesando' : 'Subiendo' }
+      : { tone: 'warning' as const, label: material.status === 'deleting' ? 'Eliminación pendiente' : material.status === 'queued' ? 'En cola' : material.status === 'processing' ? 'Procesando' : 'Subiendo' }
   return <div className="materials-list-row">
     <button className="material-open" onClick={onOpen} disabled={material.status !== 'ready'}><span className="file-type-mark">{material.kind === 'link' ? 'URL' : material.name.split('.').pop()?.toUpperCase()}</span><span className="material-copy"><strong title={material.name}>{material.name}</strong><small>{material.kind === 'link' ? 'Enlace externo' : `${formatSize(material.size_bytes)} · ${material.chunk_count} fragmentos`}</small></span></button>
-    <div className="material-status"><Badge tone={status.tone}>{status.label}</Badge>{material.status === 'failed' && <Button variant="outline" size="small" onClick={onRetry}><RotateCw size={14} />Reintentar</Button>}{material.status === 'ready' && material.kind === 'file' && aiReady && <><Button variant="outline" size="small" onClick={onRetry}><RotateCw size={14} />Reindexar</Button><Button variant="outline" size="small" onClick={onGenerate}><Sparkles size={14} />Crear pregunta</Button></>}<div className="row-menu-wrap"><Button variant="ghost" size="small" aria-label={`Acciones de ${material.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={17} /></Button>{menuOpen && <div className="row-menu">{material.kind === 'file' && material.status === 'ready' && <button onClick={() => { setMenuOpen(false); onDownload() }}><ArrowDownToLine size={14} />Descargar original</button>}<button onClick={() => { setMenuOpen(false); onEdit() }}><FileText size={14} />Editar detalles</button><button className="danger-text" onClick={() => { setMenuOpen(false); onDelete() }}><Trash2 size={14} />Eliminar material</button></div>}</div></div>
+    <div className="material-status"><Badge tone={status.tone}>{status.label}</Badge>{material.status === 'failed' && <Button variant="outline" size="small" onClick={onRetry}><RotateCw size={14} />Reintentar</Button>}{material.status === 'ready' && material.kind === 'file' && aiReady && <><Button variant="outline" size="small" onClick={onRetry}><RotateCw size={14} />Reindexar</Button><Button variant="outline" size="small" onClick={onGenerate}><Sparkles size={14} />Crear pregunta</Button></>}<div className="row-menu-wrap"><Button variant="ghost" size="small" aria-label={`Acciones de ${material.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={17} /></Button>{menuOpen && <div className="row-menu">{material.kind === 'file' && material.status === 'ready' && <button onClick={() => { setMenuOpen(false); onDownload() }}><ArrowDownToLine size={14} />Descargar original</button>}{material.status !== 'deleting' && <button onClick={() => { setMenuOpen(false); onEdit() }}><FileText size={14} />Editar detalles</button>}<button className="danger-text" onClick={() => { setMenuOpen(false); onDelete() }}><Trash2 size={14} />{material.status === 'deleting' ? 'Reintentar eliminación' : 'Eliminar material'}</button></div>}</div></div>
     {material.error && <p className="material-error">{material.error}</p>}
   </div>
 }

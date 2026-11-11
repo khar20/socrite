@@ -2,11 +2,11 @@ import hashlib
 import math
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import AIProviderError, embed_texts, generate_tutor_reply
+from app.ai import AIProviderError, embed_texts, evaluate_open_response, generate_tutor_reply
 from app.auth import require_student
 from app.config import settings
 from app.db import get_db
@@ -17,6 +17,7 @@ from app.models import (
     Course,
     CourseInvitation,
     CourseMember,
+    LearningEvidenceEvent,
     LearningReflection,
     Material,
     MaterialChunk,
@@ -24,6 +25,7 @@ from app.models import (
     QuestionAttempt,
     ReviewSchedule,
     Skill,
+    SpacedReviewEvent,
     StudentSkillMastery,
     Submission,
     Topic,
@@ -33,6 +35,7 @@ from app.models import (
     User,
 )
 from app.schemas import ReflectionCreate, ReviewRatingIn, StudentAnswerIn, TutorMessageCreate
+from app.services.ai_usage import enforce_course_budget, record_ai_usage
 from app.services.audit import record_event
 from app.services.pedagogy import record_skill_evidence, review_interval
 from app.storage import storage_client
@@ -65,16 +68,28 @@ async def owned_attempt(attempt_id: str, student: User, db: AsyncSession) -> Ass
 
 @router.get("/courses")
 async def list_courses(
+    limit: int = Query(default=25, ge=1, le=100), offset: int = Query(default=0, ge=0),
     student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
-) -> list[dict]:
+) -> dict:
+    membership_filter = (CourseMember.profile_id == student.id, CourseMember.role == "student")
+    total = await db.scalar(select(func.count(CourseMember.id)).where(*membership_filter)) or 0
+    active_courses = await db.scalar(
+        select(func.count(Course.id)).join(CourseMember).where(
+            *membership_filter, Course.status == "active",
+        )
+    ) or 0
+    ready_materials = await db.scalar(
+        select(func.count(Material.id)).join(CourseMember, CourseMember.course_id == Material.course_id)
+        .where(*membership_filter, Material.status == "ready")
+    ) or 0
     courses = (await db.execute(
-        select(Course).join(CourseMember).where(
-            CourseMember.profile_id == student.id, CourseMember.role == "student",
-        ).order_by(Course.updated_at.desc())
+        select(Course).join(CourseMember).where(*membership_filter)
+        .order_by(Course.updated_at.desc()).limit(limit).offset(offset)
     )).scalars().all()
     course_ids = [course.id for course in courses]
     if not course_ids:
-        return []
+        return {"items": [], "total": total, "limit": limit, "offset": offset,
+                "summary": {"course_count": 0, "active_course_count": 0, "material_count": 0}}
     unit_counts = dict((await db.execute(
         select(Unit.course_id, func.count(Unit.id)).where(Unit.course_id.in_(course_ids))
         .group_by(Unit.course_id)
@@ -91,7 +106,9 @@ async def list_courses(
                        "credits": course.credits, "academic_period": course.academic_period,
                        "created_at": course.created_at, "unit_count": unit_counts.get(course.id, 0),
                        "material_count": material_counts.get(course.id, 0)})
-    return result
+    return {"items": result, "total": total, "limit": limit, "offset": offset,
+            "summary": {"course_count": total, "active_course_count": active_courses,
+                        "material_count": ready_materials}}
 
 
 @router.post("/invitations/{token}/accept")
@@ -148,6 +165,133 @@ async def get_course(
             "material_count": material_count}
 
 
+@router.get("/courses/{course_id}/next-activity")
+async def next_activity(
+    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
+) -> dict:
+    await enrolled_course(course_id, student, db)
+    now = datetime.now(UTC)
+    skills = (await db.execute(
+        select(Skill, Unit).join(Unit, Unit.id == Skill.unit_id)
+        .where(Unit.course_id == course_id).order_by(Unit.position, Skill.position)
+    )).all()
+    if not skills:
+        return {"skill": None, "activity": None, "reason": "Tu docente aún no ha publicado habilidades."}
+
+    skill_ids = [skill.id for skill, _ in skills]
+    mastery_rows = (await db.execute(select(StudentSkillMastery).where(
+        StudentSkillMastery.student_id == student.id,
+        StudentSkillMastery.skill_id.in_(skill_ids),
+    ))).scalars().all()
+    mastery = {row.skill_id: row for row in mastery_rows}
+    schedules = (await db.execute(select(ReviewSchedule).where(
+        ReviewSchedule.student_id == student.id,
+        ReviewSchedule.skill_id.in_(skill_ids),
+    ))).scalars().all()
+    schedule_by_skill = {row.skill_id: row for row in schedules}
+
+    def priority(item: tuple[Skill, Unit]) -> tuple[int, float, int]:
+        skill, _ = item
+        evidence = mastery.get(skill.id)
+        schedule = schedule_by_skill.get(skill.id)
+        if schedule and schedule.due_at <= now:
+            return 0, evidence.probability if evidence else 0.1, schedule.due_at.timestamp().__int__()
+        if evidence is None:
+            return 1, 0.1, 0
+        return 2 if evidence.probability < 0.65 else 3, evidence.probability, 0
+
+    ordered_skills = sorted(skills, key=priority)
+    published = (await db.execute(
+        select(Assessment, Question.skill_id, Question.irt_difficulty, Question.irt_discrimination)
+        .join(AssessmentQuestion, AssessmentQuestion.assessment_id == Assessment.id)
+        .join(Question, Question.id == AssessmentQuestion.question_id)
+        .where(Assessment.course_id == course_id, Assessment.status == "published")
+    )).all()
+    attempts = (await db.execute(
+        select(AssessmentAttempt.assessment_id, func.max(AssessmentAttempt.submitted_at))
+        .where(AssessmentAttempt.student_id == student.id)
+        .group_by(AssessmentAttempt.assessment_id)
+    )).all()
+    last_attempt = dict(attempts)
+    by_skill: dict[str, dict[str, dict]] = {}
+    for assessment, linked_skill_id, difficulty, discrimination in published:
+        candidate = by_skill.setdefault(linked_skill_id, {}).setdefault(
+            assessment.id,
+            {"assessment": assessment, "difficulty": [], "discrimination": []},
+        )
+        candidate["difficulty"].append(difficulty if difficulty is not None else 0.0)
+        candidate["discrimination"].append(discrimination if discrimination is not None else 1.0)
+
+    selected_skill = ordered_skills[0]
+    selected_assessment = None
+    selected_expected_success = None
+    for skill, _unit in ordered_skills:
+        evidence = mastery.get(skill.id)
+        schedule = schedule_by_skill.get(skill.id)
+        desired_kind = (
+            "diagnostic" if evidence is None else
+            "practice" if (schedule and schedule.due_at <= now) or evidence.probability < 0.65 else
+            "transfer"
+        )
+        candidates = list(by_skill.get(skill.id, {}).values())
+        if candidates:
+            kind_order = {
+                "diagnostic": {"diagnostic": 0, "practice": 1, "quiz": 2, "transfer": 3},
+                "practice": {"practice": 0, "diagnostic": 1, "quiz": 2, "transfer": 3},
+                "transfer": {"transfer": 0, "practice": 1, "quiz": 2, "diagnostic": 3},
+            }[desired_kind]
+            probability = evidence.probability if evidence else 0.1
+            theta = math.log(probability / (1 - probability))
+            target_success = 0.55 if desired_kind == "transfer" else 0.65
+            for candidate in candidates:
+                count = len(candidate["difficulty"])
+                predicted = sum(
+                    1 / (1 + math.exp(-max(-60, min(60, discrimination * (theta - difficulty)))))
+                    for difficulty, discrimination in zip(
+                        candidate["difficulty"], candidate["discrimination"], strict=True,
+                    )
+                ) / count
+                candidate["question_count"] = count
+                candidate["predicted_success"] = predicted
+            candidates.sort(key=lambda candidate: (
+                kind_order.get(candidate["assessment"].kind, 4),
+                last_attempt.get(candidate["assessment"].id) is not None,
+                abs(candidate["predicted_success"] - target_success),
+                last_attempt.get(candidate["assessment"].id) or datetime.min.replace(tzinfo=UTC),
+                candidate["assessment"].published_at or candidate["assessment"].created_at,
+            ))
+            selected_skill = (skill, _unit)
+            selected_assessment = candidates[0]
+            selected_expected_success = candidates[0]["predicted_success"]
+            break
+
+    skill, unit = selected_skill
+    evidence = mastery.get(skill.id)
+    schedule = schedule_by_skill.get(skill.id)
+    if schedule and schedule.due_at <= now:
+        reason = "Este repaso ya vence. Practícalo para reforzar la retención."
+    elif evidence is None:
+        reason = "Aún no hay evidencia para esta habilidad. Empieza con un diagnóstico."
+    elif evidence.probability < 0.65:
+        reason = "Tus respuestas muestran que esta habilidad necesita más práctica."
+    else:
+        reason = "Ya tienes evidencias sólidas. Comprueba la transferencia en un problema nuevo."
+    activity = None
+    if selected_assessment:
+        assessment = selected_assessment["assessment"]
+        activity = {"id": assessment.id, "title": assessment.title, "kind": assessment.kind,
+                    "question_count": selected_assessment["question_count"],
+                    "predicted_success": selected_expected_success}
+    return {
+        "skill": {"id": skill.id, "title": skill.title, "unit": unit.title,
+                  "probability": evidence.probability if evidence else None,
+                  "observations": evidence.observations if evidence else 0,
+                  "due_at": schedule.due_at if schedule else None},
+        "activity": activity,
+        "reason": reason if activity else f"{reason} Pide a tu docente una actividad para {skill.title}.",
+    }
+
+
 @router.get("/courses/{course_id}/curriculum")
 async def get_curriculum(
     course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
@@ -178,19 +322,23 @@ async def get_curriculum(
 @router.get("/courses/{course_id}/materials")
 async def list_materials(
     course_id: str, folder_id: str | None = None, search: str = "",
+    limit: int = Query(default=25, ge=1, le=100), offset: int = Query(default=0, ge=0),
     student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
-) -> list[dict]:
+) -> dict:
     await enrolled_course(course_id, student, db)
-    query = select(Material).where(Material.course_id == course_id, Material.status == "ready")
+    conditions = [Material.course_id == course_id, Material.status == "ready"]
     if folder_id:
-        query = query.where(Material.folder_id == folder_id)
+        conditions.append(Material.folder_id == folder_id)
     if search.strip():
-        query = query.where(Material.name.ilike(f"%{search.strip()[:160]}%"))
-    materials = (await db.execute(query.order_by(Material.created_at.desc()))).scalars().all()
-    return [{"id": material.id, "name": material.name, "kind": material.kind,
+        conditions.append(Material.name.ilike(f"%{search.strip()[:160]}%"))
+    query = select(Material).where(*conditions)
+    total = await db.scalar(select(func.count(Material.id)).where(*conditions)) or 0
+    materials = (await db.execute(query.order_by(Material.created_at.desc()).limit(limit).offset(offset))).scalars().all()
+    items = [{"id": material.id, "name": material.name, "kind": material.kind,
              "content_type": material.content_type, "size_bytes": material.size_bytes,
              "folder_id": material.folder_id, "unit_id": material.unit_id,
              "chunk_count": material.chunk_count} for material in materials]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/materials/{material_id}/download-url")
@@ -244,19 +392,22 @@ async def list_assessments(
 
 @router.get("/courses/{course_id}/submissions")
 async def list_submissions(
-    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
-) -> list[dict]:
+    course_id: str, limit: int = Query(default=25, ge=1, le=100), offset: int = Query(default=0, ge=0),
+    student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
+) -> dict:
     await enrolled_course(course_id, student, db)
+    submission_filter = (Submission.course_id == course_id, Submission.student_id == student.id)
+    total = await db.scalar(select(func.count(Submission.id)).where(*submission_filter)) or 0
     result = await db.execute(
         select(Submission, Question).outerjoin(Question, Question.id == Submission.question_id)
-        .where(Submission.course_id == course_id, Submission.student_id == student.id)
-        .order_by(Submission.created_at.desc())
+        .where(*submission_filter).order_by(Submission.created_at.desc()).limit(limit).offset(offset)
     )
-    return [{"id": submission.id, "question": question.prompt if question else "Open response",
+    items = [{"id": submission.id, "question": question.prompt if question else "Open response",
              "response": submission.response, "suggested_score": submission.suggested_score,
              "final_score": submission.final_score, "teacher_comment": submission.teacher_comment,
              "status": submission.status, "created_at": submission.created_at}
             for submission, question in result.all()]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.post("/assessments/{assessment_id}/attempts", status_code=201)
@@ -353,6 +504,8 @@ async def answer_question(
     response_value = data.response
     is_correct: bool | None = None
     suggested_score: float | None = None
+    suggested_feedback = ""
+    evaluation_usage: dict = {}
     if question.question_type == "multiple_choice":
         if not isinstance(response_value, int) or isinstance(response_value, bool):
             raise HTTPException(status_code=422, detail="Choose one of the available options")
@@ -369,21 +522,56 @@ async def answer_question(
     elif not isinstance(response_value, str) or not response_value.strip():
         raise HTTPException(status_code=422, detail="Write a response before submitting")
 
+    if question.question_type == "open" and settings.ai_configured and question.rubric:
+        try:
+            await enforce_course_budget(db, attempt.course_id)
+            score, suggested_feedback, evaluation_usage = await evaluate_open_response(
+                question.prompt,
+                response_value,
+                question.rubric,
+            )
+            suggested_score = score / 20
+        except HTTPException as exc:
+            if exc.status_code != 429:
+                raise
+        except AIProviderError:
+            suggested_feedback = ""
+            evaluation_usage = {}
+
     answer = QuestionAttempt(
         assessment_attempt_id=attempt.id, question_id=question.id,
         response=response_value, is_correct=is_correct, confidence=data.confidence,
         suggested_score=suggested_score,
         final_score=None if question.question_type == "open" else suggested_score,
+        feedback=suggested_feedback,
     )
     db.add(answer)
     await db.flush()
     if question.question_type == "open":
         db.add(Submission(
             course_id=attempt.course_id, student_id=student.id, question_id=question.id,
-            question_attempt_id=answer.id, response=response_value, status="pending",
+            question_attempt_id=answer.id, response=response_value,
+            suggested_score=round(suggested_score * 20) if suggested_score is not None else None,
+            status="pending",
         ))
     elif is_correct is not None and question.skill_id:
-        await record_skill_evidence(db, student.id, question.skill_id, is_correct)
+        assessment = await db.get(Assessment, attempt.assessment_id)
+        await record_skill_evidence(
+            db,
+            student.id,
+            question.skill_id,
+            is_correct,
+            course_id=attempt.course_id,
+            question_id=question.id,
+            assessment_id=attempt.assessment_id,
+            attempt_id=attempt.id,
+            confidence=data.confidence,
+            is_transfer=assessment is not None and assessment.kind == "transfer",
+        )
+    if evaluation_usage:
+        record_ai_usage(db, actor_id=student.id, course_id=attempt.course_id,
+                        feature="open_response_evaluation", model=settings.ai_chat_model,
+                        usage=evaluation_usage)
     await db.commit()
     return {"question_id": question.id, "is_correct": is_correct,
             "pending_review": question.question_type == "open", "suggested_score": suggested_score}
@@ -432,6 +620,36 @@ async def progress(
     ).join(Unit, Unit.id == Skill.unit_id).where(
         ReviewSchedule.student_id == student.id, Unit.course_id == course_id,
     ).order_by(ReviewSchedule.due_at))).scalars().all()
+    evidence_history = (await db.execute(
+        select(LearningEvidenceEvent, Skill, Unit)
+        .join(Skill, Skill.id == LearningEvidenceEvent.skill_id)
+        .join(Unit, Unit.id == Skill.unit_id)
+        .where(LearningEvidenceEvent.student_id == student.id,
+               LearningEvidenceEvent.course_id == course_id)
+        .order_by(LearningEvidenceEvent.created_at.desc()).limit(50)
+    )).all()
+    review_history = (await db.execute(
+        select(SpacedReviewEvent, Skill, Unit)
+        .join(Skill, Skill.id == SpacedReviewEvent.skill_id)
+        .join(Unit, Unit.id == Skill.unit_id)
+        .where(SpacedReviewEvent.student_id == student.id,
+               SpacedReviewEvent.course_id == course_id)
+        .order_by(SpacedReviewEvent.created_at.desc()).limit(30)
+    )).all()
+    transfer_attempts = (await db.execute(
+        select(AssessmentAttempt, Assessment)
+        .join(Assessment, Assessment.id == AssessmentAttempt.assessment_id)
+        .where(AssessmentAttempt.student_id == student.id,
+               AssessmentAttempt.course_id == course_id,
+               Assessment.kind == "transfer",
+               AssessmentAttempt.status.in_(("submitted", "reviewed")))
+        .order_by(AssessmentAttempt.submitted_at.desc()).limit(30)
+    )).all()
+    due_count = sum(schedule.due_at <= datetime.now(UTC) for schedule in schedules)
+    on_time_ratings = [event.rating for event, _, _ in review_history
+                       if event.due_at_before <= event.created_at]
+    transfer_scores = [attempt.score / attempt.possible_score for attempt, _ in transfer_attempts
+                       if attempt.score is not None and attempt.possible_score]
     return {
         "mastery": [{"skill_id": mastery.skill_id, "skill": skill.title, "unit": unit.title,
                      "probability": mastery.probability, "observations": mastery.observations,
@@ -439,7 +657,31 @@ async def progress(
                     for mastery, skill, unit in rows],
         "reviews": [{"skill_id": schedule.skill_id, "due_at": schedule.due_at,
                      "interval_days": schedule.interval_days, "repetitions": schedule.repetitions}
-                    for schedule in schedules],
+                     for schedule in schedules],
+        "retention": {"due_count": due_count, "review_events": len(review_history),
+                      "on_time_reviews": len(on_time_ratings),
+                      "average_self_rating": (
+                          sum(on_time_ratings) / len(on_time_ratings) if on_time_ratings else None
+                      ),
+                      "history": [{"skill_id": skill.id, "skill": skill.title, "unit": unit.title,
+                                   "rating": event.rating, "due_at": event.due_at_before,
+                                   "completed_at": event.created_at}
+                                  for event, skill, unit in review_history]},
+        "transfer": {"attempts": len(transfer_attempts),
+                     "average_score_percent": (
+                         sum(transfer_scores) / len(transfer_scores) * 100 if transfer_scores else None
+                     ),
+                     "history": [{"assessment_id": assessment.id, "title": assessment.title,
+                                  "score": attempt.score, "possible_score": attempt.possible_score,
+                                  "submitted_at": attempt.submitted_at}
+                                 for attempt, assessment in transfer_attempts]},
+        "evidence_history": [{"skill_id": skill.id, "skill": skill.title, "unit": unit.title,
+                              "evidence_type": event.evidence_type, "is_correct": event.is_correct,
+                              "is_transfer": event.is_transfer, "confidence": event.confidence,
+                              "probability_before": event.probability_before,
+                              "probability_after": event.probability_after,
+                              "created_at": event.created_at}
+                             for event, skill, unit in evidence_history],
     }
 
 
@@ -457,15 +699,31 @@ async def rate_review(
     schedule = await db.scalar(select(ReviewSchedule).where(
         ReviewSchedule.student_id == student.id, ReviewSchedule.skill_id == skill_id,
     ).with_for_update())
+    now = datetime.now(UTC)
     if schedule is None:
-        schedule = ReviewSchedule(student_id=student.id, skill_id=skill_id)
+        schedule = ReviewSchedule(student_id=student.id, skill_id=skill_id, due_at=now,
+                                  interval_days=1, repetitions=0, lapses=0)
         db.add(schedule)
+    mastery = await db.scalar(select(StudentSkillMastery).where(
+        StudentSkillMastery.student_id == student.id,
+        StudentSkillMastery.skill_id == skill_id,
+    ))
+    due_at_before = schedule.due_at or now
     interval, repetitions = review_interval(schedule.interval_days, schedule.repetitions, data.rating)
     schedule.interval_days = interval
     schedule.repetitions = repetitions
     schedule.lapses += int(data.rating == 0)
     schedule.last_rating = data.rating
-    schedule.due_at = datetime.now(UTC) + timedelta(days=interval)
+    schedule.due_at = now + timedelta(days=interval)
+    db.add(SpacedReviewEvent(
+        student_id=student.id,
+        course_id=course_id,
+        skill_id=skill_id,
+        rating=data.rating,
+        due_at_before=due_at_before,
+        interval_days=interval,
+        mastery_probability=mastery.probability if mastery else None,
+    ))
     await db.commit()
     return {"skill_id": skill_id, "due_at": schedule.due_at,
             "interval_days": schedule.interval_days}
@@ -567,10 +825,15 @@ async def send_tutor_message(
         raise HTTPException(status_code=409, detail="Tutor session is closed")
     if not settings.ai_configured:
         raise HTTPException(status_code=503, detail="The AI tutor is not configured")
+    await enforce_course_budget(db, session.course_id)
     skill_name = ""
     if session.skill_id:
         skill_name = await db.scalar(select(Skill.title).where(Skill.id == session.skill_id)) or ""
-    vector = (await embed_texts([data.content]))[0]
+    try:
+        vector_rows, embedding_usage = await embed_texts([data.content])
+    except AIProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    vector = vector_rows[0]
     nearest = (await db.execute(
         select(MaterialChunk, Material)
         .join(Material, Material.id == MaterialChunk.material_id)
@@ -603,6 +866,11 @@ async def send_tutor_message(
     )
     db.add_all([user_message, assistant_message])
     record_event(db, student.id, "tutor.message.sent", "tutor_session", session_id, session.course_id)
+    record_ai_usage(db, actor_id=student.id, course_id=session.course_id,
+                    feature="tutor_embedding", model=settings.ai_embedding_model,
+                    usage=embedding_usage)
+    record_ai_usage(db, actor_id=student.id, course_id=session.course_id,
+                    feature="tutor_response", model=settings.ai_chat_model, usage=usage)
     await db.commit()
     await db.refresh(assistant_message)
     return {"id": assistant_message.id, "role": assistant_message.role,

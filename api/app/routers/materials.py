@@ -1,8 +1,9 @@
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_teacher
@@ -123,19 +124,23 @@ async def delete_folder(
     return Response(status_code=204)
 
 
-@router.get("/courses/{course_id}/materials", response_model=list[MaterialOut])
+@router.get("/courses/{course_id}/materials")
 async def list_materials(
     course_id: str, folder_id: str | None = None, search: str = Query(default="", max_length=160),
+    limit: int = Query(default=25, ge=1, le=100), offset: int = Query(default=0, ge=0),
     teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
-) -> list[Material]:
+) -> dict:
     await owned_course(course_id, teacher, db)
-    query = select(Material).where(Material.course_id == course_id)
+    conditions = [Material.course_id == course_id]
     if folder_id:
-        query = query.where(Material.folder_id == folder_id)
+        conditions.append(Material.folder_id == folder_id)
     if search.strip():
-        query = query.where(Material.name.ilike(f"%{search.strip()}%"))
-    result = await db.execute(query.order_by(Material.created_at.desc()))
-    return list(result.scalars().all())
+        conditions.append(Material.name.ilike(f"%{search.strip()}%"))
+    query = select(Material).where(*conditions)
+    total = await db.scalar(select(func.count(Material.id)).where(*conditions)) or 0
+    result = await db.execute(query.order_by(Material.created_at.desc()).limit(limit).offset(offset))
+    items = [MaterialOut.model_validate(material).model_dump() for material in result.scalars().all()]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.post("/courses/{course_id}/materials/uploads", status_code=201)
@@ -294,19 +299,31 @@ async def retry_material(
     return material
 
 
-@router.delete("/materials/{material_id}", status_code=204)
+@router.delete("/materials/{material_id}", status_code=202, response_model=None)
 async def delete_material(
     material_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
-) -> Response:
-    material = await owned_material(material_id, teacher, db)
+) -> dict | Response:
+    material = await owned_material(material_id, teacher, db, lock=True)
+    if material.status == "processing":
+        raise HTTPException(status_code=409, detail="Wait for material processing to finish before deleting it")
     if material.object_key:
-        client = storage_client()
-        if client is None:
+        if storage_client() is None:
             raise HTTPException(status_code=503, detail="Neon Object Storage is not configured")
-        try:
-            client.delete_object(Bucket=settings.neon_storage_bucket, Key=material.object_key)
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail="Could not delete the stored file") from exc
+        if material.status == "deleting":
+            material.deletion_retry_at = datetime.now(UTC)
+            material.error = None
+            await db.commit()
+            return {"status": "deleting"}
+        await db.execute(delete(ProcessingJob).where(
+            ProcessingJob.material_id == material.id,
+            ProcessingJob.status != "processing",
+        ))
+        material.status = "deleting"
+        material.error = None
+        material.deletion_retry_at = datetime.now(UTC)
+        record_event(db, teacher.id, "material.delete.queued", "material", material.id, material.course_id)
+        await db.commit()
+        return {"status": "deleting"}
     record_event(db, teacher.id, "material.deleted", "material", material.id, material.course_id)
     await db.delete(material)
     await db.commit()

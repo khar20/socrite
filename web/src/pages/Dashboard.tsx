@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, BookOpen, CheckCircle2, Clock3, FileText, Layers3, Plus, Users } from 'lucide-react'
 import { api } from '../api'
-import type { Course, DashboardData } from '../types'
+import type { Course, DashboardData, PageResult } from '../types'
 import { Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader, Stat } from '../components/ui'
 
 function dateLabel(date: string) {
@@ -11,11 +11,11 @@ function dateLabel(date: string) {
 
 export function DashboardPage() {
   const dashboard = useQuery({ queryKey: ['dashboard'], queryFn: () => api<DashboardData>('/teacher/dashboard') })
-  const courses = useQuery({ queryKey: ['courses'], queryFn: () => api<Course[]>('/courses') })
+  const courses = useQuery({ queryKey: ['courses', 'dashboard'], queryFn: () => api<PageResult<Course>>('/courses?limit=5') })
   if (dashboard.isLoading || courses.isLoading) return <LoadingState />
   if (dashboard.isError || courses.isError) return <ErrorState message="Revisa tu conexión e inténtalo de nuevo." retry={() => { void dashboard.refetch(); void courses.refetch() }} />
   const data = dashboard.data!
-  const list = courses.data!
+  const list = courses.data!.items
 
   return <>
     <PageHeader title="Panel docente" description="Organiza el curso y revisa qué está listo para tus estudiantes." actions={<Link className="button button-primary" to="/teacher/courses"><Plus size={16} />Nuevo curso</Link>} />

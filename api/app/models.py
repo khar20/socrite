@@ -159,7 +159,7 @@ class Material(Base):
     __tablename__ = "materials"
     __table_args__ = (
         CheckConstraint("kind IN ('file', 'link')", name="ck_materials_kind"),
-        CheckConstraint("status IN ('uploading', 'queued', 'processing', 'ready', 'failed')", name="ck_materials_status"),
+        CheckConstraint("status IN ('uploading', 'queued', 'processing', 'ready', 'failed', 'deleting')", name="ck_materials_status"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -176,6 +176,8 @@ class Material(Base):
     status: Mapped[str] = mapped_column(String(20), default="uploading")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    deletion_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    deletion_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -384,6 +386,48 @@ class ReviewSchedule(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class LearningEvidenceEvent(Base):
+    __tablename__ = "learning_evidence_events"
+    __table_args__ = (
+        CheckConstraint("probability_before BETWEEN 0 AND 1", name="ck_learning_evidence_before"),
+        CheckConstraint("probability_after BETWEEN 0 AND 1", name="ck_learning_evidence_after"),
+        CheckConstraint("confidence IS NULL OR confidence BETWEEN 0 AND 2", name="ck_learning_evidence_confidence"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id: Mapped[str] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
+    skill_id: Mapped[str] = mapped_column(ForeignKey("skills.id", ondelete="CASCADE"), index=True)
+    question_id: Mapped[str | None] = mapped_column(ForeignKey("questions.id", ondelete="SET NULL"), nullable=True)
+    assessment_id: Mapped[str | None] = mapped_column(ForeignKey("assessments.id", ondelete="SET NULL"), nullable=True)
+    attempt_id: Mapped[str | None] = mapped_column(ForeignKey("assessment_attempts.id", ondelete="SET NULL"), nullable=True)
+    evidence_type: Mapped[str] = mapped_column(String(32))
+    is_correct: Mapped[bool] = mapped_column(Boolean)
+    is_transfer: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    confidence: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    probability_before: Mapped[float] = mapped_column(Float)
+    probability_after: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class SpacedReviewEvent(Base):
+    __tablename__ = "spaced_review_events"
+    __table_args__ = (
+        CheckConstraint("rating BETWEEN 0 AND 3", name="ck_spaced_review_rating"),
+        CheckConstraint("interval_days >= 1", name="ck_spaced_review_event_interval"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    student_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    course_id: Mapped[str] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
+    skill_id: Mapped[str] = mapped_column(ForeignKey("skills.id", ondelete="CASCADE"), index=True)
+    rating: Mapped[int] = mapped_column(SmallInteger)
+    due_at_before: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    interval_days: Mapped[int] = mapped_column(Integer)
+    mastery_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class TutorSession(Base):
     __tablename__ = "tutor_sessions"
     __table_args__ = (CheckConstraint("status IN ('active', 'completed', 'abandoned')", name="ck_tutor_session_status"),)
@@ -434,7 +478,7 @@ class AIUsageEvent(Base):
     model: Mapped[str] = mapped_column(String(120))
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    estimated_cost: Mapped[float] = mapped_column(Float, default=0)
+    estimated_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 

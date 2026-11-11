@@ -63,6 +63,10 @@ class StudentAllowlistCreate(BaseModel):
     email: EmailStr
 
 
+class UserActiveUpdate(BaseModel):
+    is_active: bool
+
+
 class StudentAllowlistOut(BaseModel):
     id: str
     email: str
@@ -197,6 +201,8 @@ class QuestionCreate(BaseModel):
     options: list[str] | None = Field(default=None, max_length=8)
     answer_key: Any = None
     rubric: list[RubricCriterion] = Field(default_factory=list, max_length=30)
+    irt_difficulty: float | None = Field(default=None, ge=-4, le=4)
+    irt_discrimination: float | None = Field(default=None, ge=0.1, le=4)
 
     @model_validator(mode="after")
     def validate_answer_format(self) -> "QuestionCreate":

@@ -2,8 +2,8 @@ import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from app.auth import require_teacher
 from app.config import settings
 from app.db import get_db
 from app.models import (
+    AIUsageEvent,
     Assessment,
     AssessmentAttempt,
     AssessmentQuestion,
@@ -18,10 +19,14 @@ from app.models import (
     Course,
     CourseInvitation,
     CourseMember,
+    CourseSettings,
+    LearningEvidenceEvent,
     Material,
     Question,
     QuestionAttempt,
+    ReviewSchedule,
     Skill,
+    SpacedReviewEvent,
     StudentAllowlist,
     StudentSkillMastery,
     Submission,
@@ -74,13 +79,18 @@ async def dashboard(
 
 @router.get("/courses/{course_id}/students")
 async def students(
-    course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    course_id: str, limit: int = Query(default=25, ge=1, le=100), offset: int = Query(default=0, ge=0),
+    teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     await owned_course(course_id, teacher, db)
+    total_students = await db.scalar(select(func.count(CourseMember.id)).where(
+        CourseMember.course_id == course_id, CourseMember.role == "student",
+    )) or 0
     result = await db.execute(
         select(CourseMember, User).join(User, User.id == CourseMember.profile_id)
         .where(CourseMember.course_id == course_id, CourseMember.role == "student")
         .order_by(User.first_name, User.paternal_last_name, User.maternal_last_name)
+        .limit(limit).offset(offset)
     )
     members = result.all()
     mastery_by_student: dict[str, dict] = {}
@@ -119,6 +129,181 @@ async def students(
         } for member, profile in members],
         "invitations": [{"id": invite.id, "email": invite.email, "expires_at": invite.expires_at}
                         for invite in invites],
+        "pagination": {"total": total_students, "limit": limit, "offset": offset},
+    }
+
+
+@router.get("/courses/{course_id}/analytics")
+async def course_analytics(
+    course_id: str,
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    teacher: User = Depends(require_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await owned_course(course_id, teacher, db)
+    membership_filter = (CourseMember.course_id == course_id, CourseMember.role == "student")
+    total_students = await db.scalar(
+        select(func.count(CourseMember.id)).where(*membership_filter)
+    ) or 0
+    members = (await db.execute(
+        select(CourseMember, User).join(User, User.id == CourseMember.profile_id)
+        .where(*membership_filter)
+        .order_by(User.first_name, User.paternal_last_name, User.email)
+        .limit(limit).offset(offset)
+    )).all()
+    student_ids = [user.id for _, user in members]
+    skills_and_units = (await db.execute(
+        select(Skill, Unit).join(Unit, Unit.id == Skill.unit_id)
+        .where(Unit.course_id == course_id).order_by(Unit.position, Skill.position)
+    )).all()
+    skills = [{"id": skill.id, "title": skill.title, "unit": unit.title}
+              for skill, unit in skills_and_units]
+    mastery_rows = []
+    if student_ids:
+        mastery_rows = (await db.execute(select(StudentSkillMastery).where(
+            StudentSkillMastery.student_id.in_(student_ids),
+            StudentSkillMastery.skill_id.in_([item[0].id for item in skills_and_units] or [""]),
+        ))).scalars().all()
+    mastery_map = {(row.student_id, row.skill_id): row for row in mastery_rows}
+
+    evidence_by_student: dict[str, dict] = {}
+    transfer_evidence = (await db.execute(
+        select(LearningEvidenceEvent.student_id, func.count(LearningEvidenceEvent.id),
+               func.avg(case((LearningEvidenceEvent.is_correct.is_(True), 1.0), else_=0.0)))
+        .where(LearningEvidenceEvent.course_id == course_id, LearningEvidenceEvent.is_transfer.is_(True))
+        .group_by(LearningEvidenceEvent.student_id)
+    )).all()
+    transfer_by_student = {student_id: {"count": count, "accuracy": accuracy}
+                           for student_id, count, accuracy in transfer_evidence}
+    if student_ids:
+        evidence_rows = (await db.execute(
+            select(LearningEvidenceEvent.student_id, func.count(LearningEvidenceEvent.id),
+                   func.sum(case((LearningEvidenceEvent.is_correct.is_(True), 1), else_=0)),
+                   func.max(LearningEvidenceEvent.created_at))
+            .where(LearningEvidenceEvent.course_id == course_id,
+                   LearningEvidenceEvent.student_id.in_(student_ids))
+            .group_by(LearningEvidenceEvent.student_id)
+        )).all()
+        evidence_by_student = {
+            student_id: {"count": count, "correct": correct or 0, "last": last}
+            for student_id, count, correct, last in evidence_rows
+        }
+        retention_rows = (await db.execute(
+            select(SpacedReviewEvent.student_id,
+                   func.count(SpacedReviewEvent.id),
+                   func.avg(SpacedReviewEvent.rating),
+                   func.count(SpacedReviewEvent.id).filter(
+                       SpacedReviewEvent.due_at_before <= SpacedReviewEvent.created_at,
+                   ))
+            .where(SpacedReviewEvent.course_id == course_id,
+                   SpacedReviewEvent.student_id.in_(student_ids))
+            .group_by(SpacedReviewEvent.student_id)
+        )).all()
+        retention_by_student = {
+            student_id: {"count": count, "rating": rating, "due_count": due_count}
+            for student_id, count, rating, due_count in retention_rows
+        }
+    else:
+        retention_by_student = {}
+
+    mastery_by_student: dict[str, list[float]] = {}
+    for row in mastery_rows:
+        mastery_by_student.setdefault(row.student_id, []).append(row.probability)
+    student_payload = []
+    for _, user in members:
+        evidence = evidence_by_student.get(user.id, {})
+        transfer = transfer_by_student.get(user.id, {})
+        retention = retention_by_student.get(user.id, {})
+        probabilities = mastery_by_student.get(user.id, [])
+        student_payload.append({
+            "id": user.id,
+            "name": user.full_name,
+            "email": user.email,
+            "is_active": user.is_active,
+            "mastery_average": sum(probabilities) / len(probabilities) if probabilities else None,
+            "evidence_count": evidence.get("count", 0),
+            "evidence_accuracy": evidence["correct"] / evidence["count"] if evidence.get("count") else None,
+            "last_evidence_at": evidence.get("last"),
+            "transfer_count": transfer.get("count", 0),
+            "transfer_accuracy": transfer.get("accuracy"),
+            "review_count": retention.get("count", 0),
+            "average_review_rating": retention.get("rating"),
+            "on_time_reviews": retention.get("due_count", 0),
+        })
+
+    heatmap = [{
+        **skill,
+        "cells": [{
+            "student_id": user.id,
+            "probability": (row.probability if (row := mastery_map.get((user.id, skill["id"]))) else None),
+            "observations": row.observations if row else 0,
+        } for _, user in members],
+    } for skill in skills]
+
+    now = datetime.now(UTC)
+    month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
+    usage_rows = (await db.execute(
+        select(AIUsageEvent.feature, func.count(AIUsageEvent.id),
+               func.sum(AIUsageEvent.input_tokens), func.sum(AIUsageEvent.output_tokens),
+               func.sum(AIUsageEvent.estimated_cost),
+               func.count(AIUsageEvent.id).filter(AIUsageEvent.estimated_cost.is_(None)))
+        .where(AIUsageEvent.course_id == course_id, AIUsageEvent.created_at >= month_start)
+        .group_by(AIUsageEvent.feature)
+    )).all()
+    usage_events = sum(row[1] for row in usage_rows)
+    usage_cost_is_complete = settings.ai_cost_rates_configured and all(row[5] == 0 for row in usage_rows)
+    usage_cost = sum((row[4] or 0) for row in usage_rows) if usage_cost_is_complete else None
+    course_settings = await db.get(CourseSettings, course_id)
+    budget = course_settings.monthly_ai_budget if course_settings else 150
+    feature_usage = [{"feature": feature, "events": count, "input_tokens": input_tokens or 0,
+                      "output_tokens": output_tokens or 0, "estimated_cost_usd": cost}
+                     for feature, count, input_tokens, output_tokens, cost, _ in usage_rows]
+
+    overall_mastery = await db.scalar(
+        select(func.avg(StudentSkillMastery.probability))
+        .join(Skill, Skill.id == StudentSkillMastery.skill_id)
+        .join(Unit, Unit.id == Skill.unit_id)
+        .where(Unit.course_id == course_id)
+    )
+    completed_reviews = await db.scalar(select(func.count(SpacedReviewEvent.id)).where(
+        SpacedReviewEvent.course_id == course_id,
+        SpacedReviewEvent.due_at_before <= SpacedReviewEvent.created_at,
+    )) or 0
+    overdue_reviews = await db.scalar(select(func.count(ReviewSchedule.id)).select_from(ReviewSchedule)
+    .join(Skill, Skill.id == ReviewSchedule.skill_id)
+    .join(Unit, Unit.id == Skill.unit_id).where(
+        Unit.course_id == course_id,
+        ReviewSchedule.due_at <= now,
+    )) or 0
+    return {
+        "students": student_payload,
+        "skills": skills,
+        "heatmap": heatmap,
+        "pagination": {"total": total_students, "limit": limit, "offset": offset},
+        "summary": {
+            "students": total_students,
+            "average_mastery": overall_mastery,
+            "transfer_evidence": sum(item["count"] for item in transfer_by_student.values()),
+            "transfer_accuracy": (
+                sum(item["accuracy"] * item["count"] for item in transfer_by_student.values())
+                / sum(item["count"] for item in transfer_by_student.values())
+                if any(item["count"] for item in transfer_by_student.values()) else None
+            ),
+            "completed_retention_reviews": completed_reviews,
+            "overdue_reviews": overdue_reviews,
+        },
+        "ai_usage": {
+            "month": now.strftime("%Y-%m"),
+            "events": usage_events,
+            "input_tokens": sum(row[2] or 0 for row in usage_rows),
+            "output_tokens": sum(row[3] or 0 for row in usage_rows),
+            "estimated_cost_usd": usage_cost,
+            "budget_usd": budget,
+            "pricing_configured": settings.ai_cost_rates_configured,
+            "unpriced_events": sum(row[5] for row in usage_rows),
+            "by_feature": feature_usage,
+        },
     }
 
 
@@ -190,17 +375,23 @@ async def revoke_invitation(
 
 @router.get("/courses/{course_id}/reviews")
 async def reviews(
-    course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
-) -> list[dict]:
+    course_id: str, limit: int = Query(default=25, ge=1, le=100), offset: int = Query(default=0, ge=0),
+    teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> dict:
     await owned_course(course_id, teacher, db)
-    result = await db.execute(select(Submission, User).join(User, User.id == Submission.student_id)
+    total = await db.scalar(select(func.count(Submission.id)).where(Submission.course_id == course_id)) or 0
+    result = await db.execute(select(Submission, User, QuestionAttempt)
+                              .join(User, User.id == Submission.student_id)
+                              .outerjoin(QuestionAttempt, QuestionAttempt.id == Submission.question_attempt_id)
                               .where(Submission.course_id == course_id)
-                              .order_by(Submission.created_at.desc()))
-    return [{"id": submission.id, "student_name": profile.full_name, "student_email": profile.email,
+                              .order_by(Submission.created_at.desc()).limit(limit).offset(offset))
+    items = [{"id": submission.id, "student_name": user.full_name, "student_email": user.email,
              "response": submission.response, "suggested_score": submission.suggested_score,
+             "suggested_feedback": attempt.feedback if attempt else "",
              "final_score": submission.final_score, "teacher_comment": submission.teacher_comment,
              "status": submission.status, "created_at": submission.created_at}
-            for submission, profile in result.all()]
+            for submission, user, attempt in result.all()]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.post("/submissions/{submission_id}/review")
@@ -222,11 +413,23 @@ async def review_submission(
         answer = await db.get(QuestionAttempt, submission.question_attempt_id)
         if answer:
             answer.final_score = body.final_score / 20
-            question = await db.get(Question, answer.question_id)
-            if question and question.skill_id:
-                await record_skill_evidence(db, submission.student_id, question.skill_id,
-                                            body.final_score >= 12)
             assessment_attempt = await db.get(AssessmentAttempt, answer.assessment_attempt_id)
+            question = await db.get(Question, answer.question_id)
+            assessment = await db.get(Assessment, assessment_attempt.assessment_id) if assessment_attempt else None
+            if question and question.skill_id:
+                await record_skill_evidence(
+                    db,
+                    submission.student_id,
+                    question.skill_id,
+                    body.final_score >= 12,
+                    course_id=submission.course_id,
+                    evidence_type="teacher_review",
+                    question_id=question.id,
+                    assessment_id=assessment_attempt.assessment_id if assessment_attempt else None,
+                    attempt_id=assessment_attempt.id if assessment_attempt else None,
+                    confidence=answer.confidence,
+                    is_transfer=assessment is not None and assessment.kind == "transfer",
+                )
             if assessment_attempt:
                 answers = (await db.execute(select(QuestionAttempt).where(
                     QuestionAttempt.assessment_attempt_id == assessment_attempt.id,
@@ -300,7 +503,7 @@ async def assign_assessment_question(
         AssessmentQuestion.question_id == question_id,
     ))
     if item is None:
-        item = AssessmentQuestion(assessment_id=assessment_id, question_id=question_id, **data.model_dump())
+        item = AssessmentQuestion(assessment_id=assessment_id, **data.model_dump())
         db.add(item)
     else:
         for key, value in data.model_dump().items():
@@ -368,7 +571,9 @@ async def questions(
                               .order_by(Question.created_at.desc()))
     return [{"id": q.id, "prompt": q.prompt, "unit_id": q.unit_id, "question_type": q.question_type,
              "skill_id": q.skill_id, "options": q.options, "answer_key": q.answer_key,
-             "rubric": q.rubric, "status": q.status, "created_at": q.created_at}
+             "rubric": q.rubric, "irt_difficulty": q.irt_difficulty,
+             "irt_discrimination": q.irt_discrimination,
+             "status": q.status, "created_at": q.created_at}
             for q in result.scalars().all()]
 
 
@@ -447,26 +652,34 @@ async def delete_question(
 
 @router.get("/courses/{course_id}/activity")
 async def activity(
-    course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
-) -> list[dict]:
+    course_id: str, limit: int = Query(default=50, ge=1, le=100), offset: int = Query(default=0, ge=0),
+    teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> dict:
     await owned_course(course_id, teacher, db)
-    result = await db.execute(select(AuditEvent).where(AuditEvent.course_id == course_id)
-                              .order_by(AuditEvent.created_at.desc()).limit(200))
-    return [{"id": event.id, "action": event.action, "entity_type": event.entity_type,
+    event_filter = AuditEvent.course_id == course_id
+    total = await db.scalar(select(func.count(AuditEvent.id)).where(event_filter)) or 0
+    result = await db.execute(select(AuditEvent).where(event_filter)
+                              .order_by(AuditEvent.created_at.desc()).limit(limit).offset(offset))
+    items = [{"id": event.id, "action": event.action, "entity_type": event.entity_type,
              "entity_id": event.entity_id, "details": event.details, "created_at": event.created_at}
-            for event in result.scalars().all()]
+             for event in result.scalars().all()]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/teacher/activity")
 async def all_activity(
+    limit: int = Query(default=50, ge=1, le=100), offset: int = Query(default=0, ge=0),
     teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
-) -> list[dict]:
+) -> dict:
     course_ids = select(Course.id).where(Course.owner_id == teacher.id)
-    result = await db.execute(select(AuditEvent).where(AuditEvent.course_id.in_(course_ids))
-                              .order_by(AuditEvent.created_at.desc()).limit(500))
-    return [{"id": event.id, "action": event.action, "entity_type": event.entity_type,
+    event_filter = AuditEvent.course_id.in_(course_ids)
+    total = await db.scalar(select(func.count(AuditEvent.id)).where(event_filter)) or 0
+    result = await db.execute(select(AuditEvent).where(event_filter)
+                              .order_by(AuditEvent.created_at.desc()).limit(limit).offset(offset))
+    items = [{"id": event.id, "action": event.action, "entity_type": event.entity_type,
              "entity_id": event.entity_id, "details": event.details, "created_at": event.created_at}
-            for event in result.scalars().all()]
+             for event in result.scalars().all()]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/configuration")
@@ -474,6 +687,7 @@ async def configuration(teacher: User = Depends(require_teacher)) -> dict:
     return {"database_configured": settings.database_configured,
             "ai_configured": settings.ai_configured,
             "ai_provider": settings.ai_provider_name or None,
+            "ai_cost_rates_configured": settings.ai_cost_rates_configured,
             "chat_model": settings.ai_chat_model if settings.ai_configured else None,
             "embedding_model": settings.ai_embedding_model if settings.ai_configured else None,
             "storage_configured": settings.storage_configured,

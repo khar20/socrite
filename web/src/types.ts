@@ -9,6 +9,8 @@ export type User = {
   role: 'admin' | 'teacher' | 'student'
 }
 
+export type PageResult<T> = { items: T[]; total: number; limit: number; offset: number }
+
 export type Course = {
   id: string
   title: string
@@ -45,7 +47,7 @@ export type Material = {
   kind: 'file' | 'link'
   content_type: string
   size_bytes: number
-  status: 'uploading' | 'queued' | 'processing' | 'ready' | 'failed'
+  status: 'uploading' | 'queued' | 'processing' | 'ready' | 'failed' | 'deleting'
   error: string | null
   chunk_count: number
   created_at: string
@@ -72,6 +74,8 @@ export type Question = {
   options?: string[] | null
   answer_key?: unknown
   rubric: { criterion: string }[]
+  irt_difficulty?: number | null
+  irt_discrimination?: number | null
   status: 'draft' | 'published' | 'archived'
   created_at?: string
 }
@@ -92,6 +96,7 @@ export type Submission = {
   student_email: string
   response: string
   suggested_score: number | null
+  suggested_feedback?: string
   final_score: number | null
   teacher_comment: string | null
   status: 'pending' | 'reviewed'
@@ -102,6 +107,7 @@ export type Configuration = {
   database_configured: boolean
   ai_configured: boolean
   ai_provider: string | null
+  ai_cost_rates_configured: boolean
   chat_model: string | null
   embedding_model: string | null
   storage_configured: boolean

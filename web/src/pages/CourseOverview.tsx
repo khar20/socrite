@@ -2,24 +2,22 @@ import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, BookOpen, ClipboardCheck, FileText, Layers3, Settings2, Users } from 'lucide-react'
 import { api } from '../api'
-import type { Course, Configuration, CurriculumUnit, Material } from '../types'
+import type { Course, Configuration, CurriculumUnit } from '../types'
 import { Badge, Card, EmptyState, ErrorState, LoadingState, PageHeader } from '../components/ui'
 
 export function CourseOverviewPage() {
   const { courseId = '' } = useParams()
   const course = useQuery({ queryKey: ['course', courseId], queryFn: () => api<Course>(`/courses/${courseId}`), enabled: !!courseId })
   const curriculum = useQuery({ queryKey: ['curriculum', courseId], queryFn: () => api<CurriculumUnit[]>(`/courses/${courseId}/curriculum`), enabled: !!courseId })
-  const materials = useQuery({ queryKey: ['materials', courseId], queryFn: () => api<Material[]>(`/courses/${courseId}/materials`), enabled: !!courseId })
   const config = useQuery({ queryKey: ['configuration'], queryFn: () => api<Configuration>('/configuration') })
 
-  if (course.isLoading || curriculum.isLoading || materials.isLoading || config.isLoading) return <LoadingState />
-  if (course.isError || curriculum.isError || materials.isError || config.isError) return <ErrorState message="No pudimos cargar la información del curso." retry={() => { void course.refetch(); void curriculum.refetch(); void materials.refetch(); void config.refetch() }} />
+  if (course.isLoading || curriculum.isLoading || config.isLoading) return <LoadingState />
+  if (course.isError || curriculum.isError || config.isError) return <ErrorState message="No pudimos cargar la información del curso." retry={() => { void course.refetch(); void curriculum.refetch(); void config.refetch() }} />
   const item = course.data!
   const units = curriculum.data!
-  const docs = materials.data!
   const checklist = [
     { done: units.length > 0, text: 'Estructura académica', detail: units.length ? `${units.length} unidades` : 'Agrega unidades, temas y habilidades', route: 'curriculum', icon: Layers3 },
-    { done: docs.some((material) => material.status === 'ready'), text: 'Materiales de curso', detail: docs.length ? `${docs.length} recursos · ${docs.filter((material) => material.status === 'ready').length} listos` : 'Sube documentos o añade enlaces', route: 'materials', icon: FileText },
+    { done: item.material_count > 0, text: 'Materiales de curso', detail: `${item.material_count} recursos agregados`, route: 'materials', icon: FileText },
     { done: config.data!.ai_configured, text: 'Proveedor de IA', detail: config.data!.ai_configured ? config.data!.chat_model : 'Configúralo en el entorno del servidor', route: 'settings', icon: Settings2 },
   ]
 
@@ -30,7 +28,7 @@ export function CourseOverviewPage() {
         <Card className="course-welcome"><div className="course-welcome-icon"><BookOpen size={22} /></div><div><Badge tone={item.status === 'active' ? 'success' : 'neutral'}>{item.status === 'active' ? 'Activo' : 'Borrador'}</Badge><h2>{item.description || 'Tu espacio de curso está listo para configurarse.'}</h2><p>{item.credits ? `${item.credits} créditos` : 'Créditos sin definir'}{item.academic_period ? ` · ${item.academic_period}` : ''}</p></div></Card>
         <div className="stats-grid stats-grid-compact">
           <SummaryCard icon={Layers3} title="Unidades" value={String(units.length)} route="curriculum" />
-          <SummaryCard icon={FileText} title="Materiales" value={String(docs.length)} route="materials" />
+          <SummaryCard icon={FileText} title="Materiales" value={String(item.material_count)} route="materials" />
           <SummaryCard icon={Users} title="Estudiantes" value={String(item.student_count)} route="students" />
           <SummaryCard icon={ClipboardCheck} title="Por revisar" value={String(item.pending_reviews || 0)} route="reviews" />
         </div>

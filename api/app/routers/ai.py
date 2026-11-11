@@ -8,6 +8,7 @@ from app.config import settings
 from app.db import get_db
 from app.models import Material, MaterialChunk, Question, User
 from app.routers.courses import owned_course
+from app.services.ai_usage import enforce_course_budget, record_ai_usage
 from app.services.audit import record_event
 
 router = APIRouter(tags=["ai"])
@@ -29,8 +30,9 @@ async def generate_question_draft(
                                .order_by(MaterialChunk.chunk_index).limit(8))).scalars().all()
     if not chunks:
         raise HTTPException(status_code=409, detail="This material does not contain extracted text")
+    await enforce_course_budget(db, course_id)
     try:
-        prompt = await generate_question("\n\n".join(chunk.content for chunk in chunks))
+        prompt, usage = await generate_question("\n\n".join(chunk.content for chunk in chunks))
     except AIProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     question = Question(course_id=course_id, unit_id=material.unit_id, prompt=prompt,
@@ -39,6 +41,8 @@ async def generate_question_draft(
     await db.flush()
     record_event(db, teacher.id, "question.generated", "question", question.id, course_id,
                  {"material_id": material.id})
+    record_ai_usage(db, actor_id=teacher.id, course_id=course_id,
+                    feature="question_generation", model=settings.ai_chat_model, usage=usage)
     await db.commit()
     return {"id": question.id, "prompt": prompt, "unit_id": question.unit_id,
             "question_type": question.question_type, "rubric": [], "status": question.status}

@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Mail, Plus, Trash2, Users } from 'lucide-react'
 import { api, jsonBody } from '../api'
-import { Badge, Button, Card, EmptyState, ErrorState, Field, LoadingState, PageHeader, TextInput, useToast } from '../components/ui'
+import type { PageResult } from '../types'
+import { Badge, Button, Card, EmptyState, ErrorState, Field, LoadingState, PageHeader, PaginationControls, TextInput, useToast } from '../components/ui'
 
 type AllowlistEntry = { id: string; email: string; created_at: string; registered: boolean; student_name: string | null }
 
@@ -10,14 +11,17 @@ export function StudentAllowlistPage() {
   const queryClient = useQueryClient()
   const toast = useToast()
   const [email, setEmail] = useState('')
+  const [offset, setOffset] = useState(0)
+  const limit = 25
   const entries = useQuery({
-    queryKey: ['student-allowlist'],
-    queryFn: () => api<AllowlistEntry[]>('/admin/student-allowlist'),
+    queryKey: ['student-allowlist', offset],
+    queryFn: () => api<PageResult<AllowlistEntry>>(`/admin/student-allowlist?limit=${limit}&offset=${offset}`),
   })
   const add = useMutation({
     mutationFn: () => api<AllowlistEntry>('/admin/student-allowlist', { method: 'POST', body: jsonBody({ email }) }),
     onSuccess: async () => {
       setEmail('')
+      setOffset(0)
       await queryClient.invalidateQueries({ queryKey: ['student-allowlist'] })
       toast('Correo autorizado para registrarse como estudiante.')
     },
@@ -26,6 +30,7 @@ export function StudentAllowlistPage() {
   const remove = useMutation({
     mutationFn: (id: string) => api<void>(`/admin/student-allowlist/${id}`, { method: 'DELETE' }),
     onSuccess: async () => {
+      if (entries.data?.items.length === 1 && offset > 0) setOffset(Math.max(0, offset - limit))
       await queryClient.invalidateQueries({ queryKey: ['student-allowlist'] })
       toast('Correo eliminado; la cuenta asociada fue desactivada y sus sesiones revocadas.')
     },
@@ -34,6 +39,7 @@ export function StudentAllowlistPage() {
 
   if (entries.isLoading) return <LoadingState />
   if (entries.isError) return <ErrorState message="No se pudo cargar la lista de correos autorizados." retry={() => void entries.refetch()} />
+  const items = entries.data!.items
 
   return <>
     <PageHeader title="Correos autorizados" description="Solo los correos de esta lista pueden crear cuentas de estudiante." />
@@ -43,9 +49,9 @@ export function StudentAllowlistPage() {
         <Button type="submit" disabled={add.isPending}><Plus size={15} />Autorizar correo</Button>
       </form>
     </Card>
-    <Card className="allowlist-card"><div className="card-heading"><h2>Lista de estudiantes</h2><p className="muted-text text-small">{entries.data!.length} correos autorizados</p></div>
+    <Card className="allowlist-card"><div className="card-heading"><h2>Lista de estudiantes</h2><p className="muted-text text-small">{entries.data!.total} correos autorizados</p></div>
       <div className="card-content">
-        {!entries.data!.length ? <EmptyState icon={Users} title="La lista está vacía" description="Agrega un correo para permitir que esa persona cree su cuenta de estudiante." /> : <div className="people-list">{entries.data!.map((entry) => <div className="person-row allowlist-row" key={entry.id}>
+        {!entries.data!.total ? <EmptyState icon={Users} title="La lista está vacía" description="Agrega un correo para permitir que esa persona cree su cuenta de estudiante." /> : <div className="people-list">{items.map((entry) => <div className="person-row allowlist-row" key={entry.id}>
           <div className="avatar"><Mail size={15} /></div>
           <div className="person-copy"><strong>{entry.student_name || entry.email}</strong><span>{entry.student_name ? entry.email : `Autorizado ${new Date(entry.created_at).toLocaleDateString('es')}`}</span></div>
           <Badge tone={entry.registered ? 'success' : 'warning'}>{entry.registered ? 'Cuenta activa' : 'Sin registrar'}</Badge>
@@ -55,5 +61,6 @@ export function StudentAllowlistPage() {
         </div>)}</div>}
       </div>
     </Card>
+    <PaginationControls total={entries.data!.total} limit={limit} offset={offset} onChange={setOffset} />
   </>
 }

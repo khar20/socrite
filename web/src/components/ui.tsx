@@ -104,3 +104,16 @@ export function Stat({ icon: Icon, label, value, detail }: { icon: React.Compone
 export function TableWrap({ children }: { children: ReactNode }) {
   return <div className="table-scroll"><table>{children}</table></div>
 }
+
+export function PaginationControls({ total, limit, offset, onChange }: {
+  total: number; limit: number; offset: number; onChange: (offset: number) => void
+}) {
+  if (total <= limit) return null
+  const start = offset + 1
+  const end = Math.min(offset + limit, total)
+  return <nav className="pagination-controls" aria-label="Paginación">
+    <span>{start}–{end} de {total}</span>
+    <div><Button variant="outline" size="small" disabled={offset === 0} onClick={() => onChange(Math.max(0, offset - limit))}>Anterior</Button>
+      <Button variant="outline" size="small" disabled={end >= total} onClick={() => onChange(offset + limit)}>Siguiente</Button></div>
+  </nav>
+}
