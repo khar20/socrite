@@ -31,6 +31,7 @@ Fill in the values in `.env`:
 - `NEON_STORAGE_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`: private Neon Object Storage bucket and credentials.
 - `AI_BASE_URL`, `AI_API_KEY`, `AI_CHAT_MODEL`, `AI_EMBEDDING_MODEL`: OpenAI-compatible provider. OpenRouter is the default: `AI_BASE_URL=https://openrouter.ai/api/v1`, with model IDs such as `openai/gpt-4o-mini` and `openai/text-embedding-3-small`. Change these variables to use another compatible provider or model without code changes. Leave the API key as a placeholder to run without AI.
 - AI requests run only in the FastAPI backend and worker. The key is never sent to the frontend or exposed through `VITE_*` variables.
+- In production, the API validates `APP_ENV`, requires `DATABASE_URL`, rejects placeholder secrets, and requires explicit HTTPS CORS origins. The frontend build allows only `VITE_API_URL` as a public variable.
 - `ABANDONED_UPLOAD_HOURS`: time an uncompleted upload remains before the worker removes it; defaults to 24 hours.
 - `ADMIN_EMAILS`: comma-separated bootstrap administrator addresses. Admins can manage student registration emails.
 - `TEACHER_EMAILS`: comma-separated teacher addresses allowed to register.

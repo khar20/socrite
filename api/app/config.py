@@ -2,7 +2,7 @@ from functools import cached_property
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -87,6 +87,27 @@ class Settings(BaseSettings):
         return parsed.scheme.startswith("postgresql") and all(
             value and value not in {"USER", "PASSWORD", "HOST", "DBNAME"} for value in values
         )
+
+
+    @model_validator(mode="after")
+    def validate_environment(self) -> "Settings":
+        allowed_envs = {"development", "staging", "production"}
+        if self.app_env.casefold() not in allowed_envs:
+            raise ValueError("APP_ENV must be development, staging, or production")
+
+        if self.app_env.casefold() == "production":
+            if not self.database_configured:
+                raise ValueError("DATABASE_URL must be configured in production")
+            if not self.cors_origin_list or any(origin == "*" for origin in self.cors_origin_list):
+                raise ValueError("CORS_ORIGINS must list explicit origins in production")
+            for origin in self.cors_origin_list:
+                if not origin.startswith(("https://", "http://localhost", "http://127.0.0.1")):
+                    raise ValueError("Production CORS origins must use HTTPS")
+            if self.ai_configured and not self.ai_base_url.startswith("https://"):
+                raise ValueError("AI_BASE_URL must use HTTPS in production")
+            if self.storage_configured and not self.aws_endpoint_url_s3.startswith("https://"):
+                raise ValueError("AWS_ENDPOINT_URL_S3 must use HTTPS in production")
+        return self
 
 
 settings = Settings()
