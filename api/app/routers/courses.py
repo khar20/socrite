@@ -4,14 +4,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_teacher
 from app.db import get_db
-from app.models import Course, CourseMember, CourseSettings, Material, Profile, Submission, Unit
+from app.models import Course, CourseMember, CourseSettings, Material, Submission, Unit, User
 from app.schemas import CourseCreate, CourseOut, CourseSettingsIn, CourseSettingsOut, CourseUpdate
 from app.services.audit import record_event
 
 router = APIRouter(tags=["courses"])
 
 
-async def owned_course(course_id: str, teacher: Profile, db: AsyncSession) -> Course:
+async def owned_course(course_id: str, teacher: User, db: AsyncSession) -> Course:
     result = await db.execute(select(Course).where(Course.id == course_id, Course.owner_id == teacher.id))
     course = result.scalar_one_or_none()
     if course is None:
@@ -21,7 +21,7 @@ async def owned_course(course_id: str, teacher: Profile, db: AsyncSession) -> Co
 
 @router.get("/courses")
 async def list_courses(
-    teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     result = await db.execute(select(Course).where(Course.owner_id == teacher.id).order_by(Course.updated_at.desc()))
     courses = result.scalars().all()
@@ -51,7 +51,7 @@ async def list_courses(
 
 @router.post("/courses", response_model=CourseOut, status_code=201)
 async def create_course(
-    data: CourseCreate, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    data: CourseCreate, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Course:
     course = Course(owner_id=teacher.id, **data.model_dump())
     db.add(course)
@@ -65,7 +65,7 @@ async def create_course(
 
 @router.get("/courses/{course_id}")
 async def get_course(
-    course_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     course = await owned_course(course_id, teacher, db)
     units = await db.scalar(select(func.count(Unit.id)).where(Unit.course_id == course.id)) or 0
@@ -80,7 +80,7 @@ async def get_course(
 
 @router.patch("/courses/{course_id}", response_model=CourseOut)
 async def update_course(
-    course_id: str, data: CourseUpdate, teacher: Profile = Depends(require_teacher),
+    course_id: str, data: CourseUpdate, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> Course:
     course = await owned_course(course_id, teacher, db)
@@ -94,7 +94,7 @@ async def update_course(
 
 @router.get("/courses/{course_id}/settings", response_model=CourseSettingsOut)
 async def get_settings(
-    course_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> CourseSettingsOut:
     await owned_course(course_id, teacher, db)
     result = await db.execute(select(CourseSettings).where(CourseSettings.course_id == course_id))
@@ -106,7 +106,7 @@ async def get_settings(
 
 @router.put("/courses/{course_id}/settings", response_model=CourseSettingsOut)
 async def update_settings(
-    course_id: str, data: CourseSettingsIn, teacher: Profile = Depends(require_teacher),
+    course_id: str, data: CourseSettingsIn, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> CourseSettings:
     await owned_course(course_id, teacher, db)

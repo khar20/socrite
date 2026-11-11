@@ -1,16 +1,74 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    HttpUrl,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 
-class ProfileOut(BaseModel):
+class UserOut(BaseModel):
     id: str
     email: str
-    name: str
+    first_name: str
+    paternal_last_name: str
+    maternal_last_name: str
     role: str
+    is_active: bool
 
     model_config = ConfigDict(from_attributes=True)
+
+    @computed_field
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.paternal_last_name} {self.maternal_last_name}".strip()
+
+
+class AccountNamesIn(BaseModel):
+    first_name: str = Field(min_length=1, max_length=100)
+    paternal_last_name: str = Field(min_length=1, max_length=100)
+    maternal_last_name: str = Field(min_length=1, max_length=100)
+
+    @field_validator("first_name", "paternal_last_name", "maternal_last_name")
+    @classmethod
+    def trim_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("This field cannot be blank")
+        return value
+
+
+class RegisterIn(AccountNamesIn):
+    email: EmailStr
+    password: str = Field(min_length=12, max_length=128)
+
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=128)
+
+
+class PasswordUpdate(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=12, max_length=128)
+
+
+class StudentAllowlistCreate(BaseModel):
+    email: EmailStr
+
+
+class StudentAllowlistOut(BaseModel):
+    id: str
+    email: str
+    created_at: datetime
+    registered: bool
+    student_name: str | None
 
 
 class CourseCreate(BaseModel):

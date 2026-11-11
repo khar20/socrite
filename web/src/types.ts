@@ -1,8 +1,12 @@
-export type Profile = {
+export type User = {
   id: string
   email: string
-  name: string
-  role: 'teacher' | 'student'
+  first_name: string
+  paternal_last_name: string
+  maternal_last_name: string
+  full_name: string
+  is_active: boolean
+  role: 'admin' | 'teacher' | 'student'
 }
 
 export type Course = {
@@ -95,9 +99,7 @@ export type Submission = {
 }
 
 export type Configuration = {
-  auth_configured: boolean
   database_configured: boolean
-  migration_database_configured: boolean
   ai_configured: boolean
   ai_provider: string | null
   chat_model: string | null

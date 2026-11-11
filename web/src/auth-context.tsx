@@ -1,38 +1,32 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { authClient } from './auth'
-import { api } from './api'
-import type { Profile } from './types'
+import { ApiError, api } from './api'
+import type { User } from './types'
 
 type AuthState = {
-  profile: Profile | null
+  profile: User | null
   loading: boolean
   error: string | null
-  refresh: () => Promise<Profile | null>
+  refresh: () => Promise<User | null>
   signOut: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthState | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [profile, setProfile] = useState<Profile | null>(null)
+  const [profile, setProfile] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     setError(null)
     try {
-      const result = await authClient.getSession()
-      const sessionData = result.data as { session?: unknown } | null
-      if (!sessionData?.session) {
-        setProfile(null)
-        return null
-      }
-      const current = await api<Profile>('/me')
+      const current = await api<User>('/auth/me')
       setProfile(current)
       return current
     } catch (reason) {
       setProfile(null)
+      if (reason instanceof ApiError && reason.status === 401) return null
       const message = reason instanceof Error ? reason.message : 'No se pudo verificar la sesión.'
       setError(message)
       throw reason
@@ -44,9 +38,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void refresh().catch(() => {}) }, [refresh])
 
   const signOut = useCallback(async () => {
-    await authClient.signOut()
-    setProfile(null)
-    setError(null)
+    try {
+      await api<void>('/auth/logout', { method: 'POST' })
+    } finally {
+      setProfile(null)
+      setError(null)
+    }
   }, [])
 
   return <AuthContext.Provider value={{ profile, loading, error, refresh, signOut }}>{children}</AuthContext.Provider>

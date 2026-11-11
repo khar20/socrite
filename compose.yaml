@@ -31,8 +31,6 @@ services:
   web:
     build:
       context: ./web
-      args:
-        VITE_NEON_AUTH_URL: ${VITE_NEON_AUTH_URL}
     ports:
       - "${WEB_PORT:-8080}:80"
     restart: unless-stopped

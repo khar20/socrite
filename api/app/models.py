@@ -29,16 +29,51 @@ class Base(DeclarativeBase):
     pass
 
 
-class Profile(Base):
-    __tablename__ = "profiles"
-    __table_args__ = (CheckConstraint("role IN ('student', 'teacher', 'admin')", name="ck_profiles_role"),)
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("role IN ('student', 'teacher', 'admin')", name="ck_users_role"),
+        CheckConstraint("failed_login_attempts >= 0", name="ck_users_failed_login_attempts"),
+    )
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
-    name: Mapped[str] = mapped_column(String(200), default="")
+    first_name: Mapped[str] = mapped_column(String(100))
+    paternal_last_name: Mapped[str] = mapped_column(String(100))
+    maternal_last_name: Mapped[str] = mapped_column(String(100))
     role: Mapped[str] = mapped_column(String(20), default="student")
+    hashed_password: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.paternal_last_name} {self.maternal_last_name}".strip()
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+
+
+class StudentAllowlist(Base):
+    __tablename__ = "student_allowlist"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    added_by: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Course(Base):
@@ -46,7 +81,7 @@ class Course(Base):
     __table_args__ = (CheckConstraint("status IN ('draft', 'active', 'archived')", name="ck_courses_status"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    owner_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="CASCADE"), index=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(200))
     code: Mapped[str] = mapped_column(String(60), default="")
     description: Mapped[str] = mapped_column(Text, default="")
@@ -107,7 +142,7 @@ class CourseMember(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     course_id: Mapped[str] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
-    profile_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="CASCADE"), index=True)
+    profile_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     role: Mapped[str] = mapped_column(String(20), default="student")
 
 
@@ -131,7 +166,7 @@ class Material(Base):
     course_id: Mapped[str] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
     folder_id: Mapped[str | None] = mapped_column(ForeignKey("material_folders.id", ondelete="SET NULL"), nullable=True)
     unit_id: Mapped[str | None] = mapped_column(ForeignKey("units.id", ondelete="SET NULL"), nullable=True)
-    uploader_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="RESTRICT"))
+    uploader_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     name: Mapped[str] = mapped_column(String(255))
     kind: Mapped[str] = mapped_column(String(20), default="file")
     object_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
@@ -209,7 +244,7 @@ class Submission(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     course_id: Mapped[str] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
-    student_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     question_id: Mapped[str | None] = mapped_column(ForeignKey("questions.id", ondelete="SET NULL"), nullable=True)
     question_attempt_id: Mapped[str | None] = mapped_column(
         ForeignKey("question_attempts.id", ondelete="SET NULL"), nullable=True
@@ -235,8 +270,8 @@ class CourseInvitation(Base):
     email: Mapped[str] = mapped_column(String(320))
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")
-    invited_by: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="RESTRICT"))
-    accepted_by: Mapped[str | None] = mapped_column(ForeignKey("profiles.id", ondelete="SET NULL"), nullable=True)
+    invited_by: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    accepted_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -256,7 +291,7 @@ class Assessment(Base):
     kind: Mapped[str] = mapped_column(String(24), default="practice")
     status: Mapped[str] = mapped_column(String(20), default="draft")
     settings: Mapped[dict] = mapped_column(JSONB, default=dict)
-    created_by: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="RESTRICT"))
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -285,7 +320,7 @@ class AssessmentAttempt(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     assessment_id: Mapped[str] = mapped_column(ForeignKey("assessments.id", ondelete="CASCADE"), index=True)
     course_id: Mapped[str] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
-    student_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     attempt_number: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(20), default="in_progress")
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -321,7 +356,7 @@ class StudentSkillMastery(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    student_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     skill_id: Mapped[str] = mapped_column(ForeignKey("skills.id", ondelete="CASCADE"), index=True)
     probability: Mapped[float] = mapped_column(Float, default=0.1)
     observations: Mapped[int] = mapped_column(Integer, default=0)
@@ -339,7 +374,7 @@ class ReviewSchedule(Base):
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    student_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     skill_id: Mapped[str] = mapped_column(ForeignKey("skills.id", ondelete="CASCADE"), index=True)
     due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     interval_days: Mapped[int] = mapped_column(Integer, default=1)
@@ -355,7 +390,7 @@ class TutorSession(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     course_id: Mapped[str] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
-    student_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     skill_id: Mapped[str | None] = mapped_column(ForeignKey("skills.id", ondelete="SET NULL"), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="active")
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -382,7 +417,7 @@ class LearningReflection(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     course_id: Mapped[str] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
-    student_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     prompt: Mapped[str] = mapped_column(String(500), default="")
     body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -393,7 +428,7 @@ class AIUsageEvent(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     course_id: Mapped[str | None] = mapped_column(ForeignKey("courses.id", ondelete="SET NULL"), nullable=True, index=True)
-    actor_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="CASCADE"), index=True)
+    actor_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     feature: Mapped[str] = mapped_column(String(40))
     provider: Mapped[str] = mapped_column(String(80))
     model: Mapped[str] = mapped_column(String(120))
@@ -408,7 +443,7 @@ class AuditEvent(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     course_id: Mapped[str | None] = mapped_column(ForeignKey("courses.id", ondelete="SET NULL"), nullable=True, index=True)
-    actor_id: Mapped[str] = mapped_column(ForeignKey("profiles.id", ondelete="CASCADE"), index=True)
+    actor_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     action: Mapped[str] = mapped_column(String(80), index=True)
     entity_type: Mapped[str] = mapped_column(String(40), default="")
     entity_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

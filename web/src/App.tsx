@@ -15,12 +15,14 @@ import { StudentDashboardPage, StudentCoursePage, StudentCurriculumPage, Student
   StudentAssessmentsPage, StudentAttemptPage, StudentProgressPage, StudentJoinPage,
   StudentTutorPage, StudentFeedbackPage } from './pages/Student'
 import { AssessmentsPage } from './pages/Assessments'
+import { AccountPage } from './pages/Account'
+import { StudentAllowlistPage } from './pages/StudentAllowlist'
 
 function ProtectedLayout({ role }: { role: 'teacher' | 'student' }) {
   const { profile, loading } = useAuth()
   if (loading) return <PageLoading />
   if (!profile) return <Navigate to="/login" replace />
-  if (profile.role !== role) return <AccessDenied />
+  if (role === 'teacher' ? !['admin', 'teacher'].includes(profile.role) : profile.role !== role) return <AccessDenied />
   return <AppLayout mode={role} />
 }
 
@@ -36,7 +38,7 @@ function InvitationRoute() {
 export default function App() {
   const { profile } = useAuth()
   return <Routes>
-    <Route path="/login" element={profile ? <Navigate to={profile.role === 'teacher' ? '/teacher' : '/student'} replace /> : <LoginPage />} />
+    <Route path="/login" element={profile ? <Navigate to={profile.role === 'student' ? '/student' : '/teacher'} replace /> : <LoginPage />} />
     <Route path="/access-denied" element={<AccessDenied />} />
     <Route path="/join/:token" element={<InvitationRoute />} />
     <Route path="/teacher" element={<ProtectedLayout role="teacher" />}>
@@ -52,6 +54,8 @@ export default function App() {
       <Route path="courses/:courseId/settings" element={<SettingsPage />} />
       <Route path="courses/:courseId/activity" element={<ActivityPage />} />
       <Route path="activity" element={<ActivityPage />} />
+      <Route path="account" element={<AccountPage />} />
+      <Route path="admin/students" element={profile?.role === 'admin' ? <StudentAllowlistPage /> : <AccessDenied />} />
     </Route>
     <Route path="/student" element={<ProtectedLayout role="student" />}>
       <Route index element={<StudentDashboardPage />} />
@@ -64,6 +68,7 @@ export default function App() {
       <Route path="courses/:courseId/feedback" element={<StudentFeedbackPage />} />
       <Route path="courses/:courseId/progress" element={<StudentProgressPage />} />
       <Route path="attempts/:attemptId" element={<StudentAttemptPage />} />
+      <Route path="account" element={<AccountPage />} />
     </Route>
     <Route path="*" element={<Navigate to={profile ? (profile.role === 'teacher' ? '/teacher' : '/student') : '/login'} replace />} />
   </Routes>

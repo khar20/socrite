@@ -1,13 +1,14 @@
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_db
-from app.routers import ai, courses, curriculum, materials, me, student, teacher
+from app.routers import admin, ai, auth, courses, curriculum, materials, student, teacher
 
 
 @asynccontextmanager
@@ -21,11 +22,21 @@ app.add_middleware(
     allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    allow_headers=["Content-Type", "X-Request-ID"],
 )
 
+
+@app.middleware("http")
+async def validate_mutation_origin(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if (request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            and (not origin or origin not in settings.cors_origin_list)):
+        return JSONResponse(status_code=403, content={"detail": "Untrusted request origin"})
+    return await call_next(request)
+
 api = "/api/v1"
-app.include_router(me.router, prefix=api)
+app.include_router(auth.router, prefix=api)
+app.include_router(admin.router, prefix=api)
 app.include_router(courses.router, prefix=api)
 app.include_router(curriculum.router, prefix=api)
 app.include_router(materials.router, prefix=api)

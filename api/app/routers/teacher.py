@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import require_teacher, role_for_email
+from app.auth import require_teacher
 from app.config import settings
 from app.db import get_db
 from app.models import (
@@ -19,13 +19,14 @@ from app.models import (
     CourseInvitation,
     CourseMember,
     Material,
-    Profile,
     Question,
     QuestionAttempt,
     Skill,
+    StudentAllowlist,
     StudentSkillMastery,
     Submission,
     Unit,
+    User,
 )
 from app.routers.courses import owned_course
 from app.schemas import (
@@ -44,7 +45,7 @@ router = APIRouter(tags=["teacher"])
 
 @router.get("/teacher/dashboard")
 async def dashboard(
-    teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     courses = (await db.execute(select(Course).where(Course.owner_id == teacher.id)
                                 .order_by(Course.updated_at.desc()))).scalars().all()
@@ -73,13 +74,13 @@ async def dashboard(
 
 @router.get("/courses/{course_id}/students")
 async def students(
-    course_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     await owned_course(course_id, teacher, db)
     result = await db.execute(
-        select(CourseMember, Profile).join(Profile, Profile.id == CourseMember.profile_id)
+        select(CourseMember, User).join(User, User.id == CourseMember.profile_id)
         .where(CourseMember.course_id == course_id, CourseMember.role == "student")
-        .order_by(Profile.name)
+        .order_by(User.first_name, User.paternal_last_name, User.maternal_last_name)
     )
     members = result.all()
     mastery_by_student: dict[str, dict] = {}
@@ -108,7 +109,7 @@ async def students(
     )).scalars().all()
     return {
         "students": [{
-            "id": member.id, "name": profile.name, "email": profile.email,
+            "id": member.id, "name": profile.full_name, "email": profile.email,
             "mastery_average": (
                 mastery_by_student[profile.id]["sum"] / mastery_by_student[profile.id]["count"]
                 if profile.id in mastery_by_student else None
@@ -123,16 +124,18 @@ async def students(
 
 @router.post("/courses/{course_id}/invitations", status_code=201)
 async def create_invitation(
-    course_id: str, data: CourseInviteCreate, teacher: Profile = Depends(require_teacher),
+    course_id: str, data: CourseInviteCreate, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     course = await owned_course(course_id, teacher, db)
     if course.status != "active":
         raise HTTPException(status_code=409, detail="Activate the course before inviting students")
     email = data.email.strip().casefold()
-    if role_for_email(email) != "student":
+    if email in settings.admin_email_set or email in settings.teacher_email_set:
         raise HTTPException(status_code=422, detail="A teacher account cannot be invited as a student")
-    existing_profile = await db.scalar(select(Profile).where(Profile.email == email))
+    if not await db.scalar(select(StudentAllowlist.id).where(StudentAllowlist.email == email)):
+        raise HTTPException(status_code=409, detail="Ask an administrator to authorize this student email first")
+    existing_profile = await db.scalar(select(User).where(User.email == email))
     if existing_profile and await db.scalar(select(CourseMember.id).where(
         CourseMember.course_id == course_id,
         CourseMember.profile_id == existing_profile.id,
@@ -169,7 +172,7 @@ async def create_invitation(
 
 @router.delete("/invitations/{invitation_id}", status_code=204)
 async def revoke_invitation(
-    invitation_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    invitation_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Response:
     result = await db.execute(select(CourseInvitation).join(Course).where(
         CourseInvitation.id == invitation_id, Course.owner_id == teacher.id,
@@ -187,13 +190,13 @@ async def revoke_invitation(
 
 @router.get("/courses/{course_id}/reviews")
 async def reviews(
-    course_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await owned_course(course_id, teacher, db)
-    result = await db.execute(select(Submission, Profile).join(Profile, Profile.id == Submission.student_id)
+    result = await db.execute(select(Submission, User).join(User, User.id == Submission.student_id)
                               .where(Submission.course_id == course_id)
                               .order_by(Submission.created_at.desc()))
-    return [{"id": submission.id, "student_name": profile.name, "student_email": profile.email,
+    return [{"id": submission.id, "student_name": profile.full_name, "student_email": profile.email,
              "response": submission.response, "suggested_score": submission.suggested_score,
              "final_score": submission.final_score, "teacher_comment": submission.teacher_comment,
              "status": submission.status, "created_at": submission.created_at}
@@ -202,7 +205,7 @@ async def reviews(
 
 @router.post("/submissions/{submission_id}/review")
 async def review_submission(
-    submission_id: str, body: SubmissionReview, teacher: Profile = Depends(require_teacher),
+    submission_id: str, body: SubmissionReview, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     submission = await db.get(Submission, submission_id)
@@ -246,7 +249,7 @@ async def review_submission(
 
 @router.get("/courses/{course_id}/assessments")
 async def list_assessments(
-    course_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await owned_course(course_id, teacher, db)
     assessments = (await db.execute(select(Assessment).where(Assessment.course_id == course_id)
@@ -264,7 +267,7 @@ async def list_assessments(
 
 @router.post("/courses/{course_id}/assessments", status_code=201)
 async def create_assessment(
-    course_id: str, data: AssessmentCreate, teacher: Profile = Depends(require_teacher),
+    course_id: str, data: AssessmentCreate, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     course = await owned_course(course_id, teacher, db)
@@ -281,7 +284,7 @@ async def create_assessment(
 @router.put("/assessments/{assessment_id}/questions/{question_id}")
 async def assign_assessment_question(
     assessment_id: str, question_id: str, data: AssessmentQuestionIn,
-    teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     assessment = await db.get(Assessment, assessment_id)
     question = await db.get(Question, question_id)
@@ -310,7 +313,7 @@ async def assign_assessment_question(
 
 @router.delete("/assessments/{assessment_id}/questions/{question_id}", status_code=204)
 async def remove_assessment_question(
-    assessment_id: str, question_id: str, teacher: Profile = Depends(require_teacher),
+    assessment_id: str, question_id: str, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     assessment = await db.get(Assessment, assessment_id)
@@ -333,7 +336,7 @@ async def remove_assessment_question(
 
 @router.patch("/assessments/{assessment_id}/publish")
 async def publish_assessment(
-    assessment_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    assessment_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     assessment = await db.get(Assessment, assessment_id)
     if assessment is None:
@@ -358,7 +361,7 @@ async def publish_assessment(
 
 @router.get("/courses/{course_id}/questions")
 async def questions(
-    course_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await owned_course(course_id, teacher, db)
     result = await db.execute(select(Question).where(Question.course_id == course_id)
@@ -371,7 +374,7 @@ async def questions(
 
 @router.post("/courses/{course_id}/questions", status_code=201)
 async def create_question(
-    course_id: str, data: QuestionCreate, teacher: Profile = Depends(require_teacher),
+    course_id: str, data: QuestionCreate, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await owned_course(course_id, teacher, db)
@@ -396,7 +399,7 @@ async def create_question(
 
 @router.patch("/questions/{question_id}")
 async def update_question(
-    question_id: str, data: QuestionUpdate, teacher: Profile = Depends(require_teacher),
+    question_id: str, data: QuestionUpdate, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     question = await db.get(Question, question_id)
@@ -425,7 +428,7 @@ async def update_question(
 
 @router.delete("/questions/{question_id}", status_code=204)
 async def delete_question(
-    question_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    question_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Response:
     question = await db.get(Question, question_id)
     if question is None:
@@ -444,7 +447,7 @@ async def delete_question(
 
 @router.get("/courses/{course_id}/activity")
 async def activity(
-    course_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await owned_course(course_id, teacher, db)
     result = await db.execute(select(AuditEvent).where(AuditEvent.course_id == course_id)
@@ -456,7 +459,7 @@ async def activity(
 
 @router.get("/teacher/activity")
 async def all_activity(
-    teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     course_ids = select(Course.id).where(Course.owner_id == teacher.id)
     result = await db.execute(select(AuditEvent).where(AuditEvent.course_id.in_(course_ids))
@@ -467,10 +470,8 @@ async def all_activity(
 
 
 @router.get("/configuration")
-async def configuration(teacher: Profile = Depends(require_teacher)) -> dict:
-    return {"auth_configured": settings.auth_configured,
-            "database_configured": settings.database_configured,
-            "migration_database_configured": settings.migration_database_configured,
+async def configuration(teacher: User = Depends(require_teacher)) -> dict:
+    return {"database_configured": settings.database_configured,
             "ai_configured": settings.ai_configured,
             "ai_provider": settings.ai_provider_name or None,
             "chat_model": settings.ai_chat_model if settings.ai_configured else None,

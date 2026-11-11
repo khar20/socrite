@@ -20,7 +20,6 @@ from app.models import (
     LearningReflection,
     Material,
     MaterialChunk,
-    Profile,
     Question,
     QuestionAttempt,
     ReviewSchedule,
@@ -31,6 +30,7 @@ from app.models import (
     TutorMessage,
     TutorSession,
     Unit,
+    User,
 )
 from app.schemas import ReflectionCreate, ReviewRatingIn, StudentAnswerIn, TutorMessageCreate
 from app.services.audit import record_event
@@ -40,7 +40,7 @@ from app.storage import storage_client
 router = APIRouter(prefix="/student", tags=["student"])
 
 
-async def enrolled_course(course_id: str, student: Profile, db: AsyncSession) -> Course:
+async def enrolled_course(course_id: str, student: User, db: AsyncSession) -> Course:
     result = await db.execute(
         select(Course).join(CourseMember).where(
             Course.id == course_id,
@@ -54,7 +54,7 @@ async def enrolled_course(course_id: str, student: Profile, db: AsyncSession) ->
     return course
 
 
-async def owned_attempt(attempt_id: str, student: Profile, db: AsyncSession) -> AssessmentAttempt:
+async def owned_attempt(attempt_id: str, student: User, db: AsyncSession) -> AssessmentAttempt:
     attempt = await db.scalar(select(AssessmentAttempt).where(
         AssessmentAttempt.id == attempt_id, AssessmentAttempt.student_id == student.id,
     ).with_for_update())
@@ -65,7 +65,7 @@ async def owned_attempt(attempt_id: str, student: Profile, db: AsyncSession) -> 
 
 @router.get("/courses")
 async def list_courses(
-    student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     courses = (await db.execute(
         select(Course).join(CourseMember).where(
@@ -96,7 +96,7 @@ async def list_courses(
 
 @router.post("/invitations/{token}/accept")
 async def accept_invitation(
-    token: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    token: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
     if len(token) > 128:
         raise HTTPException(status_code=404, detail="Invitation not found")
@@ -135,7 +135,7 @@ async def accept_invitation(
 
 @router.get("/courses/{course_id}")
 async def get_course(
-    course_id: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
     course = await enrolled_course(course_id, student, db)
     unit_count = await db.scalar(select(func.count(Unit.id)).where(Unit.course_id == course.id)) or 0
@@ -150,7 +150,7 @@ async def get_course(
 
 @router.get("/courses/{course_id}/curriculum")
 async def get_curriculum(
-    course_id: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await enrolled_course(course_id, student, db)
     units = (await db.execute(select(Unit).where(Unit.course_id == course_id).order_by(Unit.position))).scalars().all()
@@ -178,7 +178,7 @@ async def get_curriculum(
 @router.get("/courses/{course_id}/materials")
 async def list_materials(
     course_id: str, folder_id: str | None = None, search: str = "",
-    student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await enrolled_course(course_id, student, db)
     query = select(Material).where(Material.course_id == course_id, Material.status == "ready")
@@ -195,7 +195,7 @@ async def list_materials(
 
 @router.get("/materials/{material_id}/download-url")
 async def download_material(
-    material_id: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    material_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
     material = await db.scalar(select(Material).join(CourseMember).where(
         Material.id == material_id,
@@ -226,7 +226,7 @@ async def download_material(
 
 @router.get("/courses/{course_id}/assessments")
 async def list_assessments(
-    course_id: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await enrolled_course(course_id, student, db)
     assessments = (await db.execute(select(Assessment).where(
@@ -244,7 +244,7 @@ async def list_assessments(
 
 @router.get("/courses/{course_id}/submissions")
 async def list_submissions(
-    course_id: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await enrolled_course(course_id, student, db)
     result = await db.execute(
@@ -261,7 +261,7 @@ async def list_submissions(
 
 @router.post("/assessments/{assessment_id}/attempts", status_code=201)
 async def start_assessment(
-    assessment_id: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    assessment_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
     assessment = await db.scalar(select(Assessment).where(
         Assessment.id == assessment_id, Assessment.status == "published",
@@ -293,7 +293,7 @@ async def start_assessment(
 
 @router.get("/attempts/{attempt_id}")
 async def get_attempt(
-    attempt_id: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    attempt_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
     attempt = await owned_attempt(attempt_id, student, db)
     return await assessment_attempt_payload(attempt, db)
@@ -326,7 +326,7 @@ async def assessment_attempt_payload(attempt: AssessmentAttempt, db: AsyncSessio
 @router.post("/attempts/{attempt_id}/questions/{question_id}")
 async def answer_question(
     attempt_id: str, question_id: str, data: StudentAnswerIn,
-    student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
     attempt = await owned_attempt(attempt_id, student, db)
     if attempt.status != "in_progress":
@@ -391,7 +391,7 @@ async def answer_question(
 
 @router.post("/attempts/{attempt_id}/submit")
 async def submit_assessment(
-    attempt_id: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    attempt_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
     attempt = await owned_attempt(attempt_id, student, db)
     if attempt.status != "in_progress":
@@ -417,7 +417,7 @@ async def submit_assessment(
 
 @router.get("/courses/{course_id}/progress")
 async def progress(
-    course_id: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
     await enrolled_course(course_id, student, db)
     rows = (await db.execute(
@@ -446,7 +446,7 @@ async def progress(
 @router.post("/reviews/{skill_id}/rate")
 async def rate_review(
     skill_id: str, data: ReviewRatingIn, course_id: str,
-    student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
     await enrolled_course(course_id, student, db)
     skill = await db.scalar(select(Skill).join(Unit).where(
@@ -473,7 +473,7 @@ async def rate_review(
 
 @router.get("/courses/{course_id}/reflections")
 async def list_reflections(
-    course_id: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await enrolled_course(course_id, student, db)
     reflections = (await db.execute(select(LearningReflection).where(
@@ -486,7 +486,7 @@ async def list_reflections(
 
 @router.post("/courses/{course_id}/reflections", status_code=201)
 async def create_reflection(
-    course_id: str, data: ReflectionCreate, student: Profile = Depends(require_student),
+    course_id: str, data: ReflectionCreate, student: User = Depends(require_student),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await enrolled_course(course_id, student, db)
@@ -500,7 +500,7 @@ async def create_reflection(
 
 @router.get("/courses/{course_id}/tutor/sessions")
 async def list_tutor_sessions(
-    course_id: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
     await enrolled_course(course_id, student, db)
     sessions = (await db.execute(select(TutorSession).where(
@@ -514,7 +514,7 @@ async def list_tutor_sessions(
 
 @router.post("/courses/{course_id}/tutor/sessions", status_code=201)
 async def create_tutor_session(
-    course_id: str, skill_id: str | None = None, student: Profile = Depends(require_student),
+    course_id: str, skill_id: str | None = None, student: User = Depends(require_student),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await enrolled_course(course_id, student, db)
@@ -533,7 +533,7 @@ async def create_tutor_session(
             "status": session.status, "started_at": session.started_at}
 
 
-async def owned_tutor_session(session_id: str, student: Profile, db: AsyncSession) -> TutorSession:
+async def owned_tutor_session(session_id: str, student: User, db: AsyncSession) -> TutorSession:
     session = await db.scalar(select(TutorSession).where(
         TutorSession.id == session_id, TutorSession.student_id == student.id,
     ))
@@ -544,7 +544,7 @@ async def owned_tutor_session(session_id: str, student: Profile, db: AsyncSessio
 
 @router.get("/tutor/sessions/{session_id}")
 async def get_tutor_session(
-    session_id: str, student: Profile = Depends(require_student), db: AsyncSession = Depends(get_db),
+    session_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
     session = await owned_tutor_session(session_id, student, db)
     messages = (await db.execute(select(TutorMessage).where(
@@ -559,7 +559,7 @@ async def get_tutor_session(
 
 @router.post("/tutor/sessions/{session_id}/messages", status_code=201)
 async def send_tutor_message(
-    session_id: str, data: TutorMessageCreate, student: Profile = Depends(require_student),
+    session_id: str, data: TutorMessageCreate, student: User = Depends(require_student),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     session = await owned_tutor_session(session_id, student, db)

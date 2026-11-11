@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import require_teacher
 from app.config import settings
 from app.db import get_db
-from app.models import Course, Material, MaterialChunk, MaterialFolder, ProcessingJob, Profile, Unit
+from app.models import Course, Material, MaterialChunk, MaterialFolder, ProcessingJob, Unit, User
 from app.routers.courses import owned_course
 from app.schemas import (
     FolderCreate,
@@ -31,7 +31,7 @@ ALLOWED_TYPES = {
 
 
 async def owned_material(
-    material_id: str, teacher: Profile, db: AsyncSession, lock: bool = False,
+    material_id: str, teacher: User, db: AsyncSession, lock: bool = False,
 ) -> Material:
     query = select(Material).join(Course).where(Material.id == material_id, Course.owner_id == teacher.id)
     if lock:
@@ -59,7 +59,7 @@ async def validate_unit(unit_id: str | None, course_id: str, db: AsyncSession) -
 
 @router.get("/courses/{course_id}/folders")
 async def list_folders(
-    course_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await owned_course(course_id, teacher, db)
     result = await db.execute(select(MaterialFolder).where(MaterialFolder.course_id == course_id).order_by(MaterialFolder.position, MaterialFolder.name))
@@ -75,7 +75,7 @@ async def list_folders(
 
 @router.post("/courses/{course_id}/folders", status_code=201)
 async def create_folder(
-    course_id: str, data: FolderCreate, teacher: Profile = Depends(require_teacher),
+    course_id: str, data: FolderCreate, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await owned_course(course_id, teacher, db)
@@ -89,7 +89,7 @@ async def create_folder(
 
 @router.patch("/folders/{folder_id}")
 async def update_folder(
-    folder_id: str, data: FolderUpdate, teacher: Profile = Depends(require_teacher),
+    folder_id: str, data: FolderUpdate, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     result = await db.execute(select(MaterialFolder).join(Course).where(
@@ -107,7 +107,7 @@ async def update_folder(
 
 @router.delete("/folders/{folder_id}", status_code=204)
 async def delete_folder(
-    folder_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    folder_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Response:
     result = await db.execute(select(MaterialFolder).join(Course).where(
         MaterialFolder.id == folder_id, Course.owner_id == teacher.id
@@ -126,7 +126,7 @@ async def delete_folder(
 @router.get("/courses/{course_id}/materials", response_model=list[MaterialOut])
 async def list_materials(
     course_id: str, folder_id: str | None = None, search: str = Query(default="", max_length=160),
-    teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> list[Material]:
     await owned_course(course_id, teacher, db)
     query = select(Material).where(Material.course_id == course_id)
@@ -140,7 +140,7 @@ async def list_materials(
 
 @router.post("/courses/{course_id}/materials/uploads", status_code=201)
 async def begin_upload(
-    course_id: str, data: UploadRequest, teacher: Profile = Depends(require_teacher),
+    course_id: str, data: UploadRequest, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await owned_course(course_id, teacher, db)
@@ -179,7 +179,7 @@ async def begin_upload(
 
 @router.post("/materials/{material_id}/complete", response_model=MaterialOut)
 async def complete_upload(
-    material_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    material_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Material:
     material = await owned_material(material_id, teacher, db, lock=True)
     if material.status in {"queued", "processing", "ready"}:
@@ -207,7 +207,7 @@ async def complete_upload(
 
 @router.post("/courses/{course_id}/materials/links", status_code=201, response_model=MaterialOut)
 async def create_link(
-    course_id: str, data: LinkCreate, teacher: Profile = Depends(require_teacher),
+    course_id: str, data: LinkCreate, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> Material:
     await owned_course(course_id, teacher, db)
@@ -226,7 +226,7 @@ async def create_link(
 
 @router.get("/materials/{material_id}/download-url")
 async def material_download_url(
-    material_id: str, inline: bool = False, teacher: Profile = Depends(require_teacher),
+    material_id: str, inline: bool = False, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     material = await owned_material(material_id, teacher, db)
@@ -252,7 +252,7 @@ async def material_download_url(
 
 @router.patch("/materials/{material_id}", response_model=MaterialOut)
 async def update_material(
-    material_id: str, data: MaterialUpdate, teacher: Profile = Depends(require_teacher),
+    material_id: str, data: MaterialUpdate, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> Material:
     material = await owned_material(material_id, teacher, db)
@@ -269,7 +269,7 @@ async def update_material(
 
 @router.get("/materials/{material_id}/text")
 async def material_text(
-    material_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    material_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     material = await owned_material(material_id, teacher, db)
     result = await db.execute(select(MaterialChunk).where(MaterialChunk.material_id == material.id)
@@ -279,7 +279,7 @@ async def material_text(
 
 @router.post("/materials/{material_id}/retry", response_model=MaterialOut)
 async def retry_material(
-    material_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    material_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Material:
     material = await owned_material(material_id, teacher, db, lock=True)
     if material.status in {"queued", "processing"}:
@@ -296,7 +296,7 @@ async def retry_material(
 
 @router.delete("/materials/{material_id}", status_code=204)
 async def delete_material(
-    material_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    material_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Response:
     material = await owned_material(material_id, teacher, db)
     if material.object_key:

@@ -6,7 +6,7 @@ from app.ai import AIProviderError, generate_question
 from app.auth import require_teacher
 from app.config import settings
 from app.db import get_db
-from app.models import Material, MaterialChunk, Profile, Question
+from app.models import Material, MaterialChunk, Question, User
 from app.routers.courses import owned_course
 from app.services.audit import record_event
 
@@ -15,7 +15,7 @@ router = APIRouter(tags=["ai"])
 
 @router.post("/courses/{course_id}/materials/{material_id}/generate-question", status_code=201)
 async def generate_question_draft(
-    course_id: str, material_id: str, teacher: Profile = Depends(require_teacher),
+    course_id: str, material_id: str, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await owned_course(course_id, teacher, db)
@@ -46,7 +46,7 @@ async def generate_question_draft(
 
 @router.patch("/questions/{question_id}/publish")
 async def publish_question(
-    question_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    question_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     question = await db.get(Question, question_id)
     if question is None:

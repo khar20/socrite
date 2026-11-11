@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Database, HardDrive, KeyRound, Save, Settings2, Sparkles } from 'lucide-react'
+import { Check, Database, HardDrive, Save, Settings2, Sparkles } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import { api, jsonBody } from '../api'
 import type { Configuration, Course } from '../types'
@@ -59,10 +59,9 @@ export function SettingsPage() {
       </div>
       <aside className="settings-aside">
         <Card><div className="card-heading"><h2>Servicios conectados</h2><p className="muted-text text-small">El estado se obtiene del servidor. Las credenciales nunca se muestran aquí.</p></div><div className="card-content integration-list">
-          <Integration icon={Database} title="Neon PostgreSQL" description={configuration.database_configured ? configuration.migration_database_configured ? 'Aplicación y migraciones configuradas con sus URLs correspondientes.' : 'La aplicación está conectada; completa DATABASE_URL_UNPOOLED para migraciones.' : 'Completa DATABASE_URL y DATABASE_URL_UNPOOLED en el servidor.'} ready={configuration.database_configured && configuration.migration_database_configured} />
-          <Integration icon={Sparkles} title="Proveedor de IA" description={configuration.ai_configured ? `${configuration.ai_provider} · ${configuration.chat_model} · embeddings ${configuration.embedding_model}` : 'Configura un OpenAI-compatible provider con AI_BASE_URL/AI_API_KEY o Neon AI Gateway con NEON_AI_GATEWAY_BASE_URL/NEON_AI_GATEWAY_TOKEN.'} ready={configuration.ai_configured} />
+          <Integration icon={Database} title="Base de datos PostgreSQL" description={configuration.database_configured ? 'Conexión estándar de PostgreSQL configurada.' : 'Completa DATABASE_URL en el servidor.'} ready={configuration.database_configured} />
+          <Integration icon={Sparkles} title="Proveedor de IA" description={configuration.ai_configured ? `${configuration.ai_provider} · ${configuration.chat_model} · embeddings ${configuration.embedding_model}` : 'Configura AI_BASE_URL, AI_API_KEY y los modelos en el servidor.'} ready={configuration.ai_configured} />
           <Integration icon={HardDrive} title="Neon Object Storage" description={configuration.storage_configured ? `Cargas privadas · máximo ${configuration.max_upload_mb} MB` : 'Configura el bucket y las credenciales de storage en el servidor.'} ready={configuration.storage_configured} />
-          <Integration icon={KeyRound} title="Neon Auth" description={configuration.auth_configured ? 'Sesiones validadas por JWKS. Activa verificación OTP obligatoria y envío del código al registrarse en Neon Auth.' : 'Configura NEON_AUTH_URL y NEON_AUTH_JWKS_URL en el servidor.'} ready={configuration.auth_configured} />
         </div></Card>
         <Card className="settings-note"><div className="card-content"><div className="note-icon"><Settings2 size={18} /></div><h3>Configuración segura</h3><p>La URL del proveedor, su clave y las credenciales de almacenamiento se administran en el archivo de entorno del servidor, no desde el navegador.</p></div></Card>
       </aside>

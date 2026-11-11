@@ -1,6 +1,5 @@
 .env
 .env.*
-.neon
 .git/
 node_modules/
 web/dist/

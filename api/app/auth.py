@@ -1,115 +1,148 @@
-from functools import lru_cache
-from urllib.parse import urlparse
+import hashlib
+import secrets
+from datetime import UTC, datetime, timedelta
 
-import jwt
-from fastapi import Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jwt import PyJWKClient
-from sqlalchemy import select
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+from fastapi import Depends, HTTPException, Request, Response
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
 from app.db import get_db
-from app.models import Profile
+from app.models import AuthSession, StudentAllowlist, User
 
-bearer = HTTPBearer(auto_error=False)
+SESSION_COOKIE = "socrite_session"
+SESSION_TTL = timedelta(days=7)
+SESSION_TTL_SECONDS = int(SESSION_TTL.total_seconds())
+LOGIN_FAILURE_LIMIT = 5
+LOGIN_LOCK_DURATION = timedelta(minutes=15)
+LAST_SEEN_INTERVAL = timedelta(minutes=5)
+
+password_hasher = PasswordHasher()
+DUMMY_PASSWORD_HASH = password_hasher.hash("socrite-invalid-login-placeholder")
 
 
-@lru_cache(maxsize=1)
-def jwks_client() -> PyJWKClient:
-    if not settings.neon_auth_jwks_url or "YOUR-" in settings.neon_auth_jwks_url:
-        raise HTTPException(status_code=503, detail="Neon Auth is not configured")
-    return PyJWKClient(settings.neon_auth_jwks_url, cache_keys=True)
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def verify_token(token: str) -> dict:
-    if not settings.neon_auth_url or "YOUR-" in settings.neon_auth_url:
-        raise HTTPException(status_code=503, detail="Neon Auth is not configured")
+async def hash_password(password: str) -> str:
+    return await run_in_threadpool(password_hasher.hash, password)
+
+
+async def verify_password(password: str, hashed_password: str) -> bool:
     try:
-        key = jwks_client().get_signing_key_from_jwt(token).key
-        issuer = f"{urlparse(settings.neon_auth_url).scheme}://{urlparse(settings.neon_auth_url).netloc}"
-        return jwt.decode(token, key, algorithms=["EdDSA"], issuer=issuer, audience=issuer)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Invalid or expired access token") from exc
+        return await run_in_threadpool(password_hasher.verify, hashed_password, password)
+    except (InvalidHashError, VerificationError, VerifyMismatchError):
+        return False
 
 
-def role_for_email(email: str) -> str:
-    return "teacher" if email.strip().casefold() in settings.teacher_email_set else "student"
+async def registration_role(email: str, db: AsyncSession) -> str | None:
+    if email in settings.admin_email_set:
+        return "admin"
+    if email in settings.teacher_email_set:
+        return "teacher"
+    allowed = await db.scalar(
+        select(StudentAllowlist.id).where(StudentAllowlist.email == email).with_for_update()
+    )
+    return "student" if allowed else None
 
 
-async def authenticated_claims(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
-) -> dict:
-    if credentials is None or credentials.scheme.casefold() != "bearer":
-        raise HTTPException(status_code=401, detail="Sign in to continue")
-    return verify_token(credentials.credentials)
+def set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=token,
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=settings.app_env.casefold() == "production",
+        samesite="lax",
+        path="/",
+    )
 
 
-async def sync_profile(
-    claims: dict = Depends(authenticated_claims), db: AsyncSession = Depends(get_db),
-) -> Profile:
-    profile_id = claims.get("sub")
-    email = str(claims.get("email", "")).strip().casefold()
-    if not profile_id or not email:
-        raise HTTPException(status_code=401, detail="The access token has no user email")
-    role = role_for_email(email)
-    if claims.get("emailVerified") is not True:
-        raise HTTPException(status_code=403, detail="Verify your email before continuing")
-    result = await db.execute(select(Profile).where(Profile.id == str(profile_id)))
-    profile = result.scalar_one_or_none()
-    if profile is None:
-        profile = Profile(id=str(profile_id), email=email, name=str(claims.get("name") or ""), role=role)
-        db.add(profile)
-    else:
-        profile.email = email
-        profile.name = str(claims.get("name") or profile.name)
-        profile.role = role
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=SESSION_COOKIE,
+        httponly=True,
+        secure=settings.app_env.casefold() == "production",
+        samesite="lax",
+        path="/",
+    )
+
+
+async def create_session(user: User, request: Request, response: Response, db: AsyncSession) -> None:
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(UTC)
+    db.add(AuthSession(
+        user_id=user.id,
+        token_hash=hash_token(token),
+        expires_at=now + SESSION_TTL,
+        last_seen_at=now,
+        user_agent=request.headers.get("user-agent", "")[:512] or None,
+        ip_address=request.client.host if request.client else None,
+    ))
+    user.last_login_at = now
+    user.failed_login_attempts = 0
+    user.locked_until = None
     await db.commit()
-    await db.refresh(profile)
-    return profile
+    set_session_cookie(response, token)
 
 
-async def current_profile(
-    claims: dict = Depends(authenticated_claims), db: AsyncSession = Depends(get_db),
-) -> Profile:
-    profile_id = claims.get("sub")
-    email = str(claims.get("email", "")).strip().casefold()
-    if not profile_id:
-        raise HTTPException(status_code=401, detail="Invalid access token")
-    result = await db.execute(select(Profile).where(Profile.id == str(profile_id)))
-    profile = result.scalar_one_or_none()
-    if profile is None:
-        raise HTTPException(status_code=403, detail="Synchronize your account before continuing")
-    if not email or profile.email.casefold() != email:
-        raise HTTPException(status_code=403, detail="Synchronize your account before continuing")
-    return profile
+async def current_session(
+    request: Request, db: AsyncSession = Depends(get_db),
+) -> AuthSession:
+    token = request.cookies.get(SESSION_COOKIE, "")
+    if not token or len(token) > 256:
+        raise HTTPException(status_code=401, detail="Inicia sesión para continuar")
+    session = await db.scalar(
+        select(AuthSession).where(AuthSession.token_hash == hash_token(token))
+    )
+    now = datetime.now(UTC)
+    if session is None:
+        raise HTTPException(status_code=401, detail="La sesión no es válida")
+    if session.expires_at <= now:
+        await db.delete(session)
+        await db.commit()
+        raise HTTPException(status_code=401, detail="La sesión expiró")
+    user = await db.get(User, session.user_id)
+    if user is None or not user.is_active:
+        await db.delete(session)
+        await db.commit()
+        raise HTTPException(status_code=401, detail="La cuenta no está activa")
+    if session.last_seen_at <= now - LAST_SEEN_INTERVAL:
+        session.last_seen_at = now
+        await db.commit()
+    return session
 
 
-async def require_teacher(
-    profile: Profile = Depends(current_profile),
-    claims: dict = Depends(authenticated_claims),
-) -> Profile:
-    email = str(claims.get("email", "")).strip().casefold()
-    if claims.get("emailVerified") is not True:
-        raise HTTPException(status_code=403, detail="Verify your institutional email before using teacher access")
-    if not email or email != profile.email.casefold():
-        raise HTTPException(status_code=403, detail="Synchronize your account before continuing")
-    if email not in settings.teacher_email_set or profile.role != "teacher":
-        raise HTTPException(status_code=403, detail="Teacher access is not enabled for this account")
-    return profile
+async def current_user(
+    session: AuthSession = Depends(current_session), db: AsyncSession = Depends(get_db),
+) -> User:
+    user = await db.get(User, session.user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="La cuenta no está activa")
+    return user
 
 
-async def require_student(
-    profile: Profile = Depends(current_profile),
-    claims: dict = Depends(authenticated_claims),
-) -> Profile:
-    if claims.get("emailVerified") is not True:
-        raise HTTPException(status_code=403, detail="Verify your email before continuing")
-    email = str(claims.get("email", "")).strip().casefold()
-    if not email or email != profile.email.casefold():
-        raise HTTPException(status_code=403, detail="Synchronize your account before continuing")
-    if profile.role != "student":
-        raise HTTPException(status_code=403, detail="Student access is not enabled for this account")
-    return profile
+async def require_teacher(user: User = Depends(current_user)) -> User:
+    if user.role not in {"admin", "teacher"}:
+        raise HTTPException(status_code=403, detail="Se requiere acceso docente")
+    return user
+
+
+async def require_student(user: User = Depends(current_user)) -> User:
+    if user.role != "student":
+        raise HTTPException(status_code=403, detail="Se requiere acceso de estudiante")
+    return user
+
+
+async def require_admin(user: User = Depends(current_user)) -> User:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Se requiere acceso de administración")
+    return user
+
+
+async def revoke_user_sessions(db: AsyncSession, user_id: str) -> None:
+    await db.execute(delete(AuthSession).where(AuthSession.user_id == user_id))

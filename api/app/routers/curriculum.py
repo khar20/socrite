@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_teacher
 from app.db import get_db
-from app.models import Course, Profile, Skill, Topic, Unit
+from app.models import Course, Skill, Topic, Unit, User
 from app.routers.courses import owned_course
 from app.schemas import SkillIn, SkillUpdate, TopicIn, TopicUpdate, UnitIn
 from app.services.audit import record_event
@@ -12,7 +12,7 @@ from app.services.audit import record_event
 router = APIRouter(tags=["curriculum"])
 
 
-async def owned_unit(unit_id: str, teacher: Profile, db: AsyncSession) -> Unit:
+async def owned_unit(unit_id: str, teacher: User, db: AsyncSession) -> Unit:
     result = await db.execute(
         select(Unit).join(Course).where(Unit.id == unit_id, Course.owner_id == teacher.id)
     )
@@ -22,7 +22,7 @@ async def owned_unit(unit_id: str, teacher: Profile, db: AsyncSession) -> Unit:
     return unit
 
 
-async def owned_entry(model, entry_id: str, teacher: Profile, db: AsyncSession):
+async def owned_entry(model, entry_id: str, teacher: User, db: AsyncSession):
     result = await db.execute(
         select(model).join(Unit).join(Course).where(model.id == entry_id, Course.owner_id == teacher.id)
     )
@@ -34,7 +34,7 @@ async def owned_entry(model, entry_id: str, teacher: Profile, db: AsyncSession):
 
 @router.get("/courses/{course_id}/curriculum")
 async def get_curriculum(
-    course_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await owned_course(course_id, teacher, db)
     result = await db.execute(select(Unit).where(Unit.course_id == course_id).order_by(Unit.position, Unit.id))
@@ -54,7 +54,7 @@ async def get_curriculum(
 
 @router.post("/courses/{course_id}/units", status_code=201)
 async def create_unit(
-    course_id: str, data: UnitIn, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    course_id: str, data: UnitIn, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     await owned_course(course_id, teacher, db)
     unit = Unit(course_id=course_id, **data.model_dump())
@@ -68,7 +68,7 @@ async def create_unit(
 
 @router.patch("/units/{unit_id}")
 async def update_unit(
-    unit_id: str, data: UnitIn, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    unit_id: str, data: UnitIn, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     unit = await owned_unit(unit_id, teacher, db)
     for key, value in data.model_dump().items():
@@ -81,7 +81,7 @@ async def update_unit(
 
 @router.delete("/units/{unit_id}", status_code=204)
 async def delete_unit(
-    unit_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    unit_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Response:
     unit = await owned_unit(unit_id, teacher, db)
     record_event(db, teacher.id, "unit.deleted", "unit", unit.id, unit.course_id)
@@ -92,7 +92,7 @@ async def delete_unit(
 
 @router.post("/units/{unit_id}/topics", status_code=201)
 async def create_topic(
-    unit_id: str, data: TopicIn, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    unit_id: str, data: TopicIn, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     unit = await owned_unit(unit_id, teacher, db)
     topic = Topic(unit_id=unit_id, **data.model_dump())
@@ -105,7 +105,7 @@ async def create_topic(
 
 @router.post("/units/{unit_id}/skills", status_code=201)
 async def create_skill(
-    unit_id: str, data: SkillIn, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    unit_id: str, data: SkillIn, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     unit = await owned_unit(unit_id, teacher, db)
     skill = Skill(unit_id=unit_id, **data.model_dump())
@@ -118,7 +118,7 @@ async def create_skill(
 
 @router.patch("/topics/{topic_id}")
 async def update_topic(
-    topic_id: str, data: TopicUpdate, teacher: Profile = Depends(require_teacher),
+    topic_id: str, data: TopicUpdate, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     topic = await owned_entry(Topic, topic_id, teacher, db)
@@ -132,7 +132,7 @@ async def update_topic(
 
 @router.delete("/topics/{topic_id}", status_code=204)
 async def delete_topic(
-    topic_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    topic_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Response:
     topic = await owned_entry(Topic, topic_id, teacher, db)
     unit = await db.get(Unit, topic.unit_id)
@@ -144,7 +144,7 @@ async def delete_topic(
 
 @router.patch("/skills/{skill_id}")
 async def update_skill(
-    skill_id: str, data: SkillUpdate, teacher: Profile = Depends(require_teacher),
+    skill_id: str, data: SkillUpdate, teacher: User = Depends(require_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     skill = await owned_entry(Skill, skill_id, teacher, db)
@@ -158,7 +158,7 @@ async def update_skill(
 
 @router.delete("/skills/{skill_id}", status_code=204)
 async def delete_skill(
-    skill_id: str, teacher: Profile = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+    skill_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Response:
     skill = await owned_entry(Skill, skill_id, teacher, db)
     unit = await db.get(Unit, skill.unit_id)

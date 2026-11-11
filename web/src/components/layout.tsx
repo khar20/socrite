@@ -90,9 +90,10 @@ export function AppLayout({ mode = 'teacher' }: { mode?: 'teacher' | 'student' }
         })}
       </div>)}
       {isTeacher && <NavLink to="/teacher/courses" onClick={closeMenu} className={({ isActive }) => `nav-link${isActive && !courseId ? ' is-active' : ''}`}><Layers3 size={18} /><span>Cursos</span></NavLink>}
+      {profile?.role === 'admin' && <NavLink to="/teacher/admin/students" onClick={closeMenu} className={({ isActive }) => `nav-link${isActive ? ' is-active' : ''}`}><Users size={18} /><span>Correos autorizados</span></NavLink>}
     </nav>
     <div className="sidebar-footer">
-      <div className="profile-row"><div className="avatar">{(profile?.name || profile?.email || 'D').slice(0, 1).toUpperCase()}</div><div className="profile-copy"><strong>{profile?.name || (isTeacher ? 'Docente' : 'Estudiante')}</strong><span>{profile?.email}</span></div><button className="icon-button" onClick={() => void signOut()} title="Cerrar sesión" aria-label="Cerrar sesión"><LogOut size={16} /></button></div>
+      <div className="profile-row"><div className="avatar">{(profile?.full_name || profile?.email || 'U').slice(0, 1).toUpperCase()}</div><Link className="profile-copy" to={`${basePath}/account`}><strong>{profile?.full_name || (isTeacher ? 'Docente' : 'Estudiante')}</strong><span>{profile?.email}</span></Link><button className="icon-button" onClick={() => void signOut()} title="Cerrar sesión" aria-label="Cerrar sesión"><LogOut size={16} /></button></div>
     </div>
   </>
 
