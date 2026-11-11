@@ -17,6 +17,33 @@ Socrite is built as a Vite + React frontend with a FastAPI backend, using Postgr
 - PostgreSQL and an S3-compatible Neon Object Storage bucket
 - An OpenAI-compatible provider for AI features (optional; OpenRouter by default)
 
+## Deployment
+
+### Backend on Render
+
+Use `render.yaml` or create two Docker services from `api/Dockerfile`:
+
+- Web service: health check `/health/ready`; pre-deploy command `alembic upgrade head`.
+- Worker service: start command `python worker.py`.
+- Set all `sync: false` variables in the Render dashboard, including `DATABASE_URL`, storage credentials, `AI_API_KEY`, `ADMIN_EMAILS`, `TEACHER_EMAILS`, and `CORS_ORIGINS`.
+- Set `CORS_ORIGINS` to the Cloudflare Workers frontend origin, for example `https://socrite-web.<subdomain>.workers.dev` (add the production custom domain as well).
+- `APP_ENV=production` enables secure cookies and strict environment validation.
+
+### Frontend on Cloudflare Workers
+
+- Project root: `web`
+- Build command: `pnpm install --frozen-lockfile && pnpm build`
+- Output directory: `dist`
+- Set `VITE_API_URL` to the Render API URL plus `/api/v1`, for example `https://socrite-api.onrender.com/api/v1`.
+- Deploy with Wrangler using `web/wrangler.toml`, or through Cloudflare's Git integration.
+- Only `VITE_API_URL` is allowed as a public frontend variable.
+
+### Local development
+
+- Backend: run from `api` with `uv run uvicorn app.main:app --reload`.
+- Frontend: run from `web` with `pnpm dev`; Vite reads `VITE_API_URL` from the root `.env`.
+- Worker: run `uv run python worker.py` from `api`.
+
 ## Configuration
 
 Create the root environment file from the template:

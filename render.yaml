@@ -1,0 +1,76 @@
+services:
+  - type: web
+    name: socrite-api
+    runtime: docker
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: ./api
+    plan: free
+    healthCheckPath: /health/ready
+    preDeployCommand: alembic upgrade head
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: NEON_STORAGE_BUCKET
+        sync: false
+      - key: AWS_ENDPOINT_URL_S3
+        sync: false
+      - key: AWS_REGION
+        value: us-east-2
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AI_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_CHAT_MODEL
+        value: openai/gpt-4o-mini
+      - key: AI_EMBEDDING_MODEL
+        value: openai/text-embedding-3-small
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: TEACHER_EMAILS
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: MAX_UPLOAD_MB
+        value: "100"
+      - key: ABANDONED_UPLOAD_HOURS
+        value: "24"
+
+  - type: worker
+    name: socrite-worker
+    runtime: docker
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: ./api
+    startCommand: python worker.py
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: NEON_STORAGE_BUCKET
+        sync: false
+      - key: AWS_ENDPOINT_URL_S3
+        sync: false
+      - key: AWS_REGION
+        value: us-east-2
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AI_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: AI_API_KEY
+        sync: false
+      - key: AI_CHAT_MODEL
+        value: openai/gpt-4o-mini
+      - key: AI_EMBEDDING_MODEL
+        value: openai/text-embedding-3-small
+      - key: MAX_UPLOAD_MB
+        value: "100"
+      - key: ABANDONED_UPLOAD_HOURS
+        value: "24"
