@@ -365,22 +365,11 @@
 .heatmap-cell.is-low { color: hsl(var(--bad)); background: hsl(var(--bad) / .11); }
 .heatmap-cell.is-building { color: hsl(var(--wn)); background: hsl(var(--wn) / .12); }
 .heatmap-cell.is-strong { color: hsl(var(--ok)); background: hsl(var(--ok) / .12); }
-.analytics-detail-grid { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 18px; margin-block-start: 18px; }
+.cohort-retention-card { margin-block-start: 18px; }
 .analytics-summary-lines { display: grid; gap: 13px; }
 .analytics-summary-lines > div { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
 .analytics-summary-lines > div strong { font-variant-numeric: tabular-nums; }
 .analytics-caveat { color: hsl(var(--mf)); font-size: 11px; line-height: 1.5; }
-.ai-usage-total { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
-.ai-usage-total svg { color: hsl(var(--pr)); }
-.ai-usage-total strong { font-size: 22px; font-variant-numeric: tabular-nums; }
-.ai-usage-total span { color: hsl(var(--mf)); font-size: 11px; }
-.budget-track { height: 8px; margin-block: 10px 14px; overflow: hidden; border-radius: 999px; background: hsl(var(--mu)); }
-.budget-track i { display: block; height: 100%; border-radius: inherit; background: hsl(var(--pr)); }
-.ai-feature-list { display: grid; gap: 8px; margin-block-start: 12px; }
-.ai-feature-list > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding-block-start: 8px; border-block-start: 1px solid hsl(var(--br)); font-size: 11px; }
-.ai-feature-list > div span { text-transform: capitalize; }
-.ai-feature-list > div small { color: hsl(var(--mf)); }
-.ai-feature-list > div strong { min-width: 72px; text-align: end; font-variant-numeric: tabular-nums; }
 .cohort-student-card { margin-block-start: 18px; }
 .cohort-student-list { display: grid; }
 .cohort-student-row { display: grid; grid-template-columns: minmax(150px, 1.1fr) minmax(140px, .8fr) minmax(180px, 1fr) auto; align-items: center; gap: 14px; padding-block: 12px; border-block-end: 1px solid hsl(var(--br)); }
@@ -415,7 +404,6 @@
 .evidence-history-row small { margin-block-start: 3px; color: hsl(var(--mf)); font-size: 10px; }
 .evidence-change { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 @media (max-width: 900px) {
-  .analytics-detail-grid { grid-template-columns: minmax(0, 1fr); }
   .cohort-student-row { grid-template-columns: minmax(0, 1fr) minmax(130px, .8fr); }
 }
 @media (max-width: 560px) {
@@ -425,6 +413,4 @@
   .progress-report-grid { grid-template-columns: minmax(0, 1fr); }
   .evidence-history-row { grid-template-columns: minmax(0, 1fr) auto; }
   .evidence-change { grid-column: 1 / -1; }
-  .ai-feature-list > div { grid-template-columns: minmax(0, 1fr) auto; }
-  .ai-feature-list > div strong { grid-column: 2; }
 }

@@ -22,9 +22,6 @@ class Settings(BaseSettings):
     ai_api_key: str = ""
     ai_chat_model: str = ""
     ai_embedding_model: str = ""
-    ai_chat_input_usd_per_million: float | None = None
-    ai_chat_output_usd_per_million: float | None = None
-    ai_embedding_usd_per_million: float | None = None
     admin_emails: str = ""
     teacher_emails: str = ""
     cors_origins: str = "http://localhost:5173"
@@ -74,15 +71,6 @@ class Settings(BaseSettings):
     @property
     def ai_provider_name(self) -> str:
         return "OpenAI-compatible provider" if self.ai_configured else ""
-
-    @property
-    def ai_cost_rates_configured(self) -> bool:
-        rates = (
-            self.ai_chat_input_usd_per_million,
-            self.ai_chat_output_usd_per_million,
-            self.ai_embedding_usd_per_million,
-        )
-        return all(rate is not None and rate >= 0 for rate in rates)
 
     @property
     def storage_configured(self) -> bool:

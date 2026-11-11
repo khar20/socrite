@@ -107,7 +107,6 @@ export type Configuration = {
   database_configured: boolean
   ai_configured: boolean
   ai_provider: string | null
-  ai_cost_rates_configured: boolean
   chat_model: string | null
   embedding_model: string | null
   storage_configured: boolean

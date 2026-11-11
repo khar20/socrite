@@ -99,7 +99,6 @@ class CourseSettings(Base):
     socratic_mode: Mapped[bool] = mapped_column(Boolean, default=True)
     human_review_required: Mapped[bool] = mapped_column(Boolean, default=True)
     attempts_before_solution: Mapped[int] = mapped_column(Integer, default=3)
-    monthly_ai_budget: Mapped[int] = mapped_column(Integer, default=150)
 
 
 class Unit(Base):
@@ -451,8 +450,6 @@ class TutorMessage(Base):
     content: Mapped[str] = mapped_column(Text)
     citations: Mapped[list] = mapped_column(JSONB, default=list)
     model: Mapped[str] = mapped_column(String(120), default="")
-    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -465,21 +462,6 @@ class LearningReflection(Base):
     prompt: Mapped[str] = mapped_column(String(500), default="")
     body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class AIUsageEvent(Base):
-    __tablename__ = "ai_usage_events"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    course_id: Mapped[str | None] = mapped_column(ForeignKey("courses.id", ondelete="SET NULL"), nullable=True, index=True)
-    actor_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    feature: Mapped[str] = mapped_column(String(40))
-    provider: Mapped[str] = mapped_column(String(80))
-    model: Mapped[str] = mapped_column(String(120))
-    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    estimated_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
 class AuditEvent(Base):

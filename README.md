@@ -6,7 +6,7 @@ The platform is designed around active learning—active recall, spaced repetiti
 
 When an OpenAI-compatible provider is configured, the tutor uses RAG over course materials, cites retrieved sources, asks progressive questions, and avoids deciding mastery. AI output remains unavailable until the provider key and compatible 1536-dimensional embedding model are configured.
 
-At the start of a course the student is directed to a diagnostic when no skill evidence exists. The next-activity selector then prioritizes overdue or weak skills and, when mastery estimates are strong, a transfer assessment. It uses assessment kind, BKT evidence, and teacher-entered IRT difficulty/discrimination. Only auto-graded results or teacher-confirmed open-response scores update BKT; review self-ratings are stored separately. The teacher's course analytics view shows cohort heatmaps, transfer evidence, retention self-reports, and AI usage.
+At the start of a course the student is directed to a diagnostic when no skill evidence exists. The next-activity selector then prioritizes overdue or weak skills and, when mastery estimates are strong, a transfer assessment. It uses assessment kind, BKT evidence, and teacher-entered IRT difficulty/discrimination. Only auto-graded results or teacher-confirmed open-response scores update BKT; review self-ratings are stored separately. The teacher's course analytics view shows cohort heatmaps, transfer evidence, and retention self-reports.
 
 Socrite is built as a Vite + React frontend with a FastAPI backend, using PostgreSQL for application data and database-backed accounts/sessions, plus Neon Object Storage for private uploads. The original `socrite.html` prototype is kept in the repository as a visual and behavior reference.
 
@@ -30,14 +30,13 @@ Fill in the values in `.env`:
 - `DATABASE_URL`: PostgreSQL connection string used by the API and Alembic. Use a direct PostgreSQL connection URL.
 - `NEON_STORAGE_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`: private Neon Object Storage bucket and credentials.
 - `AI_BASE_URL`, `AI_API_KEY`, `AI_CHAT_MODEL`, `AI_EMBEDDING_MODEL`: OpenAI-compatible provider. Leave AI credentials as placeholders to run without AI.
-- `AI_CHAT_INPUT_USD_PER_MILLION`, `AI_CHAT_OUTPUT_USD_PER_MILLION`, `AI_EMBEDDING_USD_PER_MILLION`: optional current provider rates used to estimate usage cost. Set all three to enable course-budget warnings; estimates are not provider invoices.
 - `ABANDONED_UPLOAD_HOURS`: time an uncompleted upload remains before the worker removes it; defaults to 24 hours.
 - `ADMIN_EMAILS`: comma-separated bootstrap administrator addresses. Admins can manage student registration emails.
 - `TEACHER_EMAILS`: comma-separated teacher addresses allowed to register.
 - Student registrations are allowed only for addresses in the admin-managed `student_allowlist` table.
 - Accounts use Argon2id password hashes and opaque, server-side PostgreSQL sessions in HttpOnly cookies.
 - The worker removes abandoned uploads after `ABANDONED_UPLOAD_HOURS` and retries failed object deletions with backoff; deleting materials remain visible until storage confirms removal.
-- Instructors can view the course cohort heatmap and evidence-based progress reports. AI costs are estimates derived from provider token counts and the optional rates above, not billing-provider invoices.
+- Instructors can view the course cohort heatmap and evidence-based progress reports.
 - `VITE_API_URL`: backend API URL, defaulting to `http://localhost:8000/api/v1`.
 - `CORS_ORIGINS`, `MAX_UPLOAD_MB`, `APP_ENV`: application settings.
 

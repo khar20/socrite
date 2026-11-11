@@ -99,7 +99,6 @@ class CourseSettingsIn(BaseModel):
     socratic_mode: bool = True
     human_review_required: bool = True
     attempts_before_solution: int = Field(default=3, ge=1, le=10)
-    monthly_ai_budget: int = Field(default=150, ge=0, le=100000)
 
 
 class CourseSettingsOut(CourseSettingsIn):

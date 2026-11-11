@@ -10,7 +10,6 @@ from app.ai import embed_texts
 from app.config import settings
 from app.db import SessionLocal
 from app.models import Material, MaterialChunk, ProcessingJob
-from app.services.ai_usage import enforce_course_budget, record_ai_usage, token_count
 from app.services.audit import record_event
 from app.services.ingestion import chunk_pages, extract_pages
 from app.storage import storage_client
@@ -62,8 +61,6 @@ async def process_job(job_id: str, material_id: str, lease_token: str) -> None:
                 raise ValueError("Material or active processing lease was not found")
             object_key = material.object_key
             filename = material.name
-            course_id = material.course_id
-            uploader_id = material.uploader_id
 
         client = storage_client()
         if client is None:
@@ -77,16 +74,12 @@ async def process_job(job_id: str, material_id: str, lease_token: str) -> None:
             raise ValueError("No readable text was found in this file")
 
         embeddings: list[list[float] | None] = [None] * len(chunks)
-        embedding_usage = {"prompt_tokens": 0}
         if settings.ai_configured:
-            async with SessionLocal() as db:
-                await enforce_course_budget(db, course_id)
             for start in range(0, len(chunks), 32):
-                batch_embeddings, usage = await embed_texts(
+                batch_embeddings = await embed_texts(
                     [text for _, text in chunks[start:start + 32]]
                 )
                 embeddings[start:start + 32] = batch_embeddings
-                embedding_usage["prompt_tokens"] += token_count(usage, "prompt_tokens", "input_tokens")
 
         async with SessionLocal() as db:
             job = await db.scalar(select(ProcessingJob).where(
@@ -111,10 +104,6 @@ async def process_job(job_id: str, material_id: str, lease_token: str) -> None:
             job.error = None
             job.claimed_at = None
             job.lease_token = None
-            if settings.ai_configured:
-                record_ai_usage(db, actor_id=uploader_id, course_id=course_id,
-                                feature="material_embedding", model=settings.ai_embedding_model,
-                                usage=embedding_usage)
             await db.commit()
         logger.info("Processed material %s (%d chunks)", material_id, len(chunks))
     except Exception as exc:

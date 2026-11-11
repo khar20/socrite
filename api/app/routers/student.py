@@ -35,7 +35,6 @@ from app.models import (
     User,
 )
 from app.schemas import ReflectionCreate, ReviewRatingIn, StudentAnswerIn, TutorMessageCreate
-from app.services.ai_usage import enforce_course_budget, record_ai_usage
 from app.services.audit import record_event
 from app.services.pedagogy import record_skill_evidence, review_interval
 from app.storage import storage_client
@@ -505,7 +504,6 @@ async def answer_question(
     is_correct: bool | None = None
     suggested_score: float | None = None
     suggested_feedback = ""
-    evaluation_usage: dict = {}
     if question.question_type == "multiple_choice":
         if not isinstance(response_value, int) or isinstance(response_value, bool):
             raise HTTPException(status_code=422, detail="Choose one of the available options")
@@ -524,19 +522,14 @@ async def answer_question(
 
     if question.question_type == "open" and settings.ai_configured and question.rubric:
         try:
-            await enforce_course_budget(db, attempt.course_id)
-            score, suggested_feedback, evaluation_usage = await evaluate_open_response(
+            score, suggested_feedback = await evaluate_open_response(
                 question.prompt,
                 response_value,
                 question.rubric,
             )
             suggested_score = score / 20
-        except HTTPException as exc:
-            if exc.status_code != 429:
-                raise
         except AIProviderError:
             suggested_feedback = ""
-            evaluation_usage = {}
 
     answer = QuestionAttempt(
         assessment_attempt_id=attempt.id, question_id=question.id,
@@ -568,10 +561,6 @@ async def answer_question(
             confidence=data.confidence,
             is_transfer=assessment is not None and assessment.kind == "transfer",
         )
-    if evaluation_usage:
-        record_ai_usage(db, actor_id=student.id, course_id=attempt.course_id,
-                        feature="open_response_evaluation", model=settings.ai_chat_model,
-                        usage=evaluation_usage)
     await db.commit()
     return {"question_id": question.id, "is_correct": is_correct,
             "pending_review": question.question_type == "open", "suggested_score": suggested_score}
@@ -825,12 +814,11 @@ async def send_tutor_message(
         raise HTTPException(status_code=409, detail="Tutor session is closed")
     if not settings.ai_configured:
         raise HTTPException(status_code=503, detail="The AI tutor is not configured")
-    await enforce_course_budget(db, session.course_id)
     skill_name = ""
     if session.skill_id:
         skill_name = await db.scalar(select(Skill.title).where(Skill.id == session.skill_id)) or ""
     try:
-        vector_rows, embedding_usage = await embed_texts([data.content])
+        vector_rows = await embed_texts([data.content])
     except AIProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     vector = vector_rows[0]
@@ -852,7 +840,7 @@ async def send_tutor_message(
                     for message in reversed(history)]
     conversation.append({"role": "user", "content": data.content})
     try:
-        reply, usage = await generate_tutor_reply(conversation, skill_name, sources)
+        reply = await generate_tutor_reply(conversation, skill_name, sources)
     except AIProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     user_message = TutorMessage(session_id=session_id, role="user", content=data.content)
@@ -861,16 +849,10 @@ async def send_tutor_message(
     )} for source in sources]
     assistant_message = TutorMessage(
         session_id=session_id, role="assistant", content=reply, citations=citations,
-        model=settings.ai_chat_model, input_tokens=usage.get("prompt_tokens"),
-        output_tokens=usage.get("completion_tokens"),
+        model=settings.ai_chat_model,
     )
     db.add_all([user_message, assistant_message])
     record_event(db, student.id, "tutor.message.sent", "tutor_session", session_id, session.course_id)
-    record_ai_usage(db, actor_id=student.id, course_id=session.course_id,
-                    feature="tutor_embedding", model=settings.ai_embedding_model,
-                    usage=embedding_usage)
-    record_ai_usage(db, actor_id=student.id, course_id=session.course_id,
-                    feature="tutor_response", model=settings.ai_chat_model, usage=usage)
     await db.commit()
     await db.refresh(assistant_message)
     return {"id": assistant_message.id, "role": assistant_message.role,

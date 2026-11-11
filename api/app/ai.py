@@ -29,7 +29,7 @@ async def request_ai(path: str, payload: dict) -> dict:
         raise AIProviderError("The AI provider request failed") from exc
 
 
-async def embed_texts(texts: list[str]) -> tuple[list[list[float]], dict]:
+async def embed_texts(texts: list[str]) -> list[list[float]]:
     data = await request_ai("embeddings", {"model": settings.ai_embedding_model, "input": texts})
     try:
         rows = data["data"]
@@ -38,11 +38,10 @@ async def embed_texts(texts: list[str]) -> tuple[list[list[float]], dict]:
         raise AIProviderError("The AI provider returned an invalid embeddings response") from exc
     if any(len(embedding) != 1536 for embedding in embeddings):
         raise AIProviderError("The configured embedding model must return 1536 dimensions")
-    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
-    return embeddings, usage
+    return embeddings
 
 
-async def generate_question(context: str) -> tuple[str, dict]:
+async def generate_question(context: str) -> str:
     data = await request_ai("chat/completions", {
         "model": settings.ai_chat_model,
         "temperature": 0.3,
@@ -60,11 +59,10 @@ async def generate_question(context: str) -> tuple[str, dict]:
         raise AIProviderError("The AI provider returned an invalid question response") from exc
     if not prompt:
         raise AIProviderError("The AI provider returned an empty question")
-    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
-    return prompt, usage
+    return prompt
 
 
-async def evaluate_open_response(prompt: str, response: str, rubric: list[dict]) -> tuple[int, str, dict]:
+async def evaluate_open_response(prompt: str, response: str, rubric: list[dict]) -> tuple[int, str]:
     criteria = "\n".join(f"- {item['criterion']}" for item in rubric)
     data = await request_ai("chat/completions", {
         "model": settings.ai_chat_model,
@@ -97,11 +95,10 @@ async def evaluate_open_response(prompt: str, response: str, rubric: list[dict])
     suggestions = [str(error).strip()[:500] for error in errors[:5] if str(error).strip()]
     if suggestions:
         feedback = f"{feedback.strip()}\n\nPosibles errores conceptuales: " + "; ".join(suggestions)
-    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
-    return score, feedback[:2500], usage
+    return score, feedback[:2500]
 
 
-async def generate_tutor_reply(messages: list[dict], skill: str, sources: list[dict]) -> tuple[str, dict]:
+async def generate_tutor_reply(messages: list[dict], skill: str, sources: list[dict]) -> str:
     source_text = "\n\n".join(
         f"[{index + 1}] {source['material_name']} (p. {source['page_number'] or '—'}):\n{source['content']}"
         for index, source in enumerate(sources)
@@ -124,9 +121,8 @@ async def generate_tutor_reply(messages: list[dict], skill: str, sources: list[d
     })
     try:
         reply = data["choices"][0]["message"]["content"].strip()
-        usage = data.get("usage") or {}
     except (IndexError, KeyError, TypeError, AttributeError) as exc:
         raise AIProviderError("The AI provider returned an invalid tutor response") from exc
     if not reply:
         raise AIProviderError("The AI provider returned an empty tutor response")
-    return reply, usage
+    return reply

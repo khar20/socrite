@@ -6,7 +6,7 @@ import { api, jsonBody } from '../api'
 import type { Configuration, Course } from '../types'
 import { Badge, Button, Card, ErrorState, Field, LoadingState, PageHeader, Select, TextArea, TextInput, useToast } from '../components/ui'
 
-type CourseSettings = { course_id: string; socratic_mode: boolean; human_review_required: boolean; attempts_before_solution: number; monthly_ai_budget: number }
+type CourseSettings = { course_id: string; socratic_mode: boolean; human_review_required: boolean; attempts_before_solution: number }
 
 export function SettingsPage() {
   const { courseId = '' } = useParams()
@@ -16,12 +16,12 @@ export function SettingsPage() {
   const settingsQuery = useQuery({ queryKey: ['course-settings', courseId], queryFn: () => api<CourseSettings>(`/courses/${courseId}/settings`) })
   const configQuery = useQuery({ queryKey: ['configuration'], queryFn: () => api<Configuration>('/configuration') })
   const [course, setCourse] = useState({ title: '', code: '', description: '', credits: 0, academic_period: '', status: 'draft' })
-  const [settings, setSettings] = useState({ socratic_mode: true, human_review_required: true, attempts_before_solution: 3, monthly_ai_budget: 150 })
+  const [settings, setSettings] = useState({ socratic_mode: true, human_review_required: true, attempts_before_solution: 3 })
   useEffect(() => {
     if (courseQuery.data) setCourse({ title: courseQuery.data.title, code: courseQuery.data.code, description: courseQuery.data.description, credits: courseQuery.data.credits, academic_period: courseQuery.data.academic_period, status: courseQuery.data.status })
   }, [courseQuery.data])
   useEffect(() => {
-    if (settingsQuery.data) setSettings({ socratic_mode: settingsQuery.data.socratic_mode, human_review_required: settingsQuery.data.human_review_required, attempts_before_solution: settingsQuery.data.attempts_before_solution, monthly_ai_budget: settingsQuery.data.monthly_ai_budget })
+    if (settingsQuery.data) setSettings({ socratic_mode: settingsQuery.data.socratic_mode, human_review_required: settingsQuery.data.human_review_required, attempts_before_solution: settingsQuery.data.attempts_before_solution })
   }, [settingsQuery.data])
   const saveCourse = useMutation({
     mutationFn: () => api<Course>(`/courses/${courseId}`, { method: 'PATCH', body: jsonBody(course) }),
@@ -53,14 +53,13 @@ export function SettingsPage() {
           <SettingToggle label="Modo socrático" description="Prioriza preguntas y pistas antes de explicar directamente." checked={settings.socratic_mode} onChange={(value) => setSettings({ ...settings, socratic_mode: value })} />
           <SettingToggle label="Revisión docente obligatoria" description="Las respuestas abiertas esperan revisión humana antes de confirmar una nota." checked={settings.human_review_required} onChange={(value) => setSettings({ ...settings, human_review_required: value })} />
           <Field label="Intentos antes de revelar una referencia" hint="Define cuántas respuestas o pistas se permiten antes de mostrar una explicación de referencia."><Select value={settings.attempts_before_solution} onChange={(event) => setSettings({ ...settings, attempts_before_solution: Number(event.target.value) })}>{[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((value) => <option key={value} value={value}>{value} intentos</option>)}</Select></Field>
-          <Field label="Presupuesto mensual estimado (US$)" hint="Es un límite de control para el curso; no modifica el límite del proveedor."><TextInput type="number" min="0" max="100000" value={settings.monthly_ai_budget} onChange={(event) => setSettings({ ...settings, monthly_ai_budget: Number(event.target.value) })} /></Field>
           <div className="form-actions"><Button type="submit" disabled={saveSettings.isPending}><Save size={15} />Guardar reglas</Button></div>
         </form></Card>
       </div>
       <aside className="settings-aside">
         <Card><div className="card-heading"><h2>Servicios conectados</h2><p className="muted-text text-small">El estado se obtiene del servidor. Las credenciales nunca se muestran aquí.</p></div><div className="card-content integration-list">
           <Integration icon={Database} title="Base de datos PostgreSQL" description={configuration.database_configured ? 'Conexión estándar de PostgreSQL configurada.' : 'Completa DATABASE_URL en el servidor.'} ready={configuration.database_configured} />
-          <Integration icon={Sparkles} title="Proveedor de IA" description={configuration.ai_configured ? `${configuration.ai_provider} · ${configuration.chat_model} · embeddings ${configuration.embedding_model}${configuration.ai_cost_rates_configured ? ' · tarifas estimadas configuradas' : ' · sin tarifas de costo'}` : 'Configura AI_BASE_URL, AI_API_KEY y los modelos en el servidor.'} ready={configuration.ai_configured} />
+          <Integration icon={Sparkles} title="Proveedor de IA" description={configuration.ai_configured ? `${configuration.ai_provider} · ${configuration.chat_model} · embeddings ${configuration.embedding_model}` : 'Configura AI_BASE_URL, AI_API_KEY y los modelos en el servidor.'} ready={configuration.ai_configured} />
           <Integration icon={HardDrive} title="Neon Object Storage" description={configuration.storage_configured ? `Cargas privadas · máximo ${configuration.max_upload_mb} MB` : 'Configura el bucket y las credenciales de storage en el servidor.'} ready={configuration.storage_configured} />
         </div></Card>
         <Card className="settings-note"><div className="card-content"><div className="note-icon"><Settings2 size={18} /></div><h3>Configuración segura</h3><p>La URL del proveedor, su clave y las credenciales de almacenamiento se administran en el archivo de entorno del servidor, no desde el navegador.</p></div></Card>

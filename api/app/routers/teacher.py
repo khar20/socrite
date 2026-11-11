@@ -11,7 +11,6 @@ from app.auth import require_teacher
 from app.config import settings
 from app.db import get_db
 from app.models import (
-    AIUsageEvent,
     Assessment,
     AssessmentAttempt,
     AssessmentQuestion,
@@ -19,7 +18,6 @@ from app.models import (
     Course,
     CourseInvitation,
     CourseMember,
-    CourseSettings,
     LearningEvidenceEvent,
     Material,
     Question,
@@ -242,24 +240,6 @@ async def course_analytics(
     } for skill in skills]
 
     now = datetime.now(UTC)
-    month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
-    usage_rows = (await db.execute(
-        select(AIUsageEvent.feature, func.count(AIUsageEvent.id),
-               func.sum(AIUsageEvent.input_tokens), func.sum(AIUsageEvent.output_tokens),
-               func.sum(AIUsageEvent.estimated_cost),
-               func.count(AIUsageEvent.id).filter(AIUsageEvent.estimated_cost.is_(None)))
-        .where(AIUsageEvent.course_id == course_id, AIUsageEvent.created_at >= month_start)
-        .group_by(AIUsageEvent.feature)
-    )).all()
-    usage_events = sum(row[1] for row in usage_rows)
-    usage_cost_is_complete = settings.ai_cost_rates_configured and all(row[5] == 0 for row in usage_rows)
-    usage_cost = sum((row[4] or 0) for row in usage_rows) if usage_cost_is_complete else None
-    course_settings = await db.get(CourseSettings, course_id)
-    budget = course_settings.monthly_ai_budget if course_settings else 150
-    feature_usage = [{"feature": feature, "events": count, "input_tokens": input_tokens or 0,
-                      "output_tokens": output_tokens or 0, "estimated_cost_usd": cost}
-                     for feature, count, input_tokens, output_tokens, cost, _ in usage_rows]
-
     overall_mastery = await db.scalar(
         select(func.avg(StudentSkillMastery.probability))
         .join(Skill, Skill.id == StudentSkillMastery.skill_id)
@@ -292,17 +272,6 @@ async def course_analytics(
             ),
             "completed_retention_reviews": completed_reviews,
             "overdue_reviews": overdue_reviews,
-        },
-        "ai_usage": {
-            "month": now.strftime("%Y-%m"),
-            "events": usage_events,
-            "input_tokens": sum(row[2] or 0 for row in usage_rows),
-            "output_tokens": sum(row[3] or 0 for row in usage_rows),
-            "estimated_cost_usd": usage_cost,
-            "budget_usd": budget,
-            "pricing_configured": settings.ai_cost_rates_configured,
-            "unpriced_events": sum(row[5] for row in usage_rows),
-            "by_feature": feature_usage,
         },
     }
 
@@ -687,7 +656,6 @@ async def configuration(teacher: User = Depends(require_teacher)) -> dict:
     return {"database_configured": settings.database_configured,
             "ai_configured": settings.ai_configured,
             "ai_provider": settings.ai_provider_name or None,
-            "ai_cost_rates_configured": settings.ai_cost_rates_configured,
             "chat_model": settings.ai_chat_model if settings.ai_configured else None,
             "embedding_model": settings.ai_embedding_model if settings.ai_configured else None,
             "storage_configured": settings.storage_configured,
