@@ -4,7 +4,7 @@ Socrite is a teacher-first platform for university mathematics and science cours
 
 The platform is designed around active learning—active recall, spaced repetition, Socratic questioning, self-explanation, transfer practice, and metacognitive reflection. Student answers create timestamped skill evidence; BKT estimates mastery, while a due/weak-skill selector uses teacher-set IRT parameters to recommend an assessment. Open-response AI scoring is only a rubric-based suggestion; a teacher must set the final score. DKT and experimental validation remain future research work.
 
-When an OpenAI-compatible provider is configured, the tutor uses RAG over course materials, cites retrieved sources, asks progressive questions, and avoids deciding mastery. AI output remains unavailable until the provider key and compatible 1536-dimensional embedding model are configured.
+When an OpenAI-compatible provider is configured (OpenRouter by default), the tutor uses RAG over course materials, cites retrieved sources, asks progressive questions, and avoids deciding mastery. AI output remains unavailable until the provider key and compatible 1536-dimensional embedding model are configured.
 
 At the start of a course the student is directed to a diagnostic when no skill evidence exists. The next-activity selector then prioritizes overdue or weak skills and, when mastery estimates are strong, a transfer assessment. It uses assessment kind, BKT evidence, and teacher-entered IRT difficulty/discrimination. Only auto-graded results or teacher-confirmed open-response scores update BKT; review self-ratings are stored separately. The teacher's course analytics view shows cohort heatmaps, transfer evidence, and retention self-reports.
 
@@ -15,7 +15,7 @@ Socrite is built as a Vite + React frontend with a FastAPI backend, using Postgr
 - Node.js 20.19+ and pnpm
 - Python 3.11+ and uv
 - PostgreSQL and an S3-compatible Neon Object Storage bucket
-- An OpenAI-compatible provider for AI features (optional)
+- An OpenAI-compatible provider for AI features (optional; OpenRouter by default)
 
 ## Configuration
 
@@ -29,7 +29,8 @@ Fill in the values in `.env`:
 
 - `DATABASE_URL`: PostgreSQL connection string used by the API and Alembic. Use a direct PostgreSQL connection URL.
 - `NEON_STORAGE_BUCKET`, `AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`: private Neon Object Storage bucket and credentials.
-- `AI_BASE_URL`, `AI_API_KEY`, `AI_CHAT_MODEL`, `AI_EMBEDDING_MODEL`: OpenAI-compatible provider. Leave AI credentials as placeholders to run without AI.
+- `AI_BASE_URL`, `AI_API_KEY`, `AI_CHAT_MODEL`, `AI_EMBEDDING_MODEL`: OpenAI-compatible provider. OpenRouter is the default: `AI_BASE_URL=https://openrouter.ai/api/v1`, with model IDs such as `openai/gpt-4o-mini` and `openai/text-embedding-3-small`. Change these variables to use another compatible provider or model without code changes. Leave the API key as a placeholder to run without AI.
+- AI requests run only in the FastAPI backend and worker. The key is never sent to the frontend or exposed through `VITE_*` variables.
 - `ABANDONED_UPLOAD_HOURS`: time an uncompleted upload remains before the worker removes it; defaults to 24 hours.
 - `ADMIN_EMAILS`: comma-separated bootstrap administrator addresses. Admins can manage student registration emails.
 - `TEACHER_EMAILS`: comma-separated teacher addresses allowed to register.
