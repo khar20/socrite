@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: socrite-api
+    name: socrite
     runtime: docker
     dockerfilePath: ./api/Dockerfile
     dockerContext: ./api
@@ -35,7 +35,7 @@ services:
       - key: TEACHER_EMAILS
         sync: false
       - key: CORS_ORIGINS
-        sync: false
+        value: https://socrite.kharont.dev
       - key: MAX_UPLOAD_MB
         value: "100"
       - key: ABANDONED_UPLOAD_HOURS
