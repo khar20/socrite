@@ -1,18 +1,47 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowDownToLine, BookOpen, Check, FileText, Folder, FolderPlus, Link2, MoreHorizontal, Pencil, RotateCw, Sparkles, Trash2, UploadCloud, X } from 'lucide-react'
+import { ArrowDownToLine, BookOpen, FileText, Folder, FolderPlus, Link2, MoreHorizontal, Pencil, RotateCw, Sparkles, Trash2, UploadCloud, X } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import { api, jsonBody } from '../api'
-import type { Configuration, CurriculumUnit, Folder as MaterialFolder, Material, PageResult } from '../types'
+import type { Configuration, CurriculumUnit, Folder as MaterialFolder, Material, PageResult, UploadResult } from '../types'
 import { Badge, Button, Card, EmptyState, ErrorState, Field, LoadingState, Modal, PageHeader, PaginationControls, Select, TextInput, useToast } from '../components/ui'
 
-type UploadItem = { id: string; name: string; progress: number; status: 'uploading' | 'ready' | 'failed'; error?: string }
+type UploadStatus = 'pending' | 'uploading' | 'verifying' | 'queued' | 'processing' | 'ready' | 'failed'
+type UploadItem = {
+  id: string
+  file: File
+  name: string
+  size: number
+  contentType: string
+  folderId: string
+  unitId: string
+  progress: number
+  status: UploadStatus
+  materialId?: string
+  error?: string
+}
 type UploadTicket = { material_id: string; upload_url: string; headers: Record<string, string> }
 const mimeByExtension: Record<string, string> = {
   pdf: 'application/pdf',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   txt: 'text/plain',
+}
+const uploadTone: Record<UploadStatus, 'neutral' | 'success' | 'warning' | 'danger' | 'info'> = {
+  pending: 'neutral',
+  uploading: 'info',
+  verifying: 'info',
+  queued: 'warning',
+  processing: 'warning',
+  ready: 'success',
+  failed: 'danger',
+}
+const finishedStatuses: UploadStatus[] = ['queued', 'processing', 'ready', 'failed']
+const syncableUploadStatus: Partial<Record<Material['status'], UploadStatus>> = {
+  queued: 'queued',
+  processing: 'processing',
+  ready: 'ready',
+  failed: 'failed',
 }
 
 function sendFile(url: string, headers: Record<string, string>, file: File, onProgress: (progress: number) => void) {
@@ -31,6 +60,22 @@ function sendFile(url: string, headers: Record<string, string>, file: File, onPr
 function formatSize(size: number) {
   if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`
   return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
+function uploadStatusLabel(item: UploadItem) {
+  if (item.status === 'uploading') return `${item.progress}%`
+  return { pending: 'Pendiente', verifying: 'Verificando', queued: 'En cola', processing: 'Procesando', ready: 'Listo', failed: 'Error', uploading: '' }[item.status]
+}
+
+function uploadStatusDetail(item: UploadItem) {
+  switch (item.status) {
+    case 'uploading': return 'Subiendo archivo…'
+    case 'verifying': return 'Comprobando el archivo en el almacenamiento…'
+    case 'queued': return 'Almacenamiento confirmado; pendiente de procesamiento.'
+    case 'processing': return 'Procesando el contenido del archivo…'
+    case 'ready': return 'Archivo procesado y listo.'
+    default: return ''
+  }
 }
 
 export function MaterialsPage() {
@@ -57,6 +102,7 @@ export function MaterialsPage() {
   const [editName, setEditName] = useState('')
   const [editFolder, setEditFolder] = useState('')
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([])
+  const [uploading, setUploading] = useState(false)
 
   const foldersQuery = useQuery({ queryKey: ['folders', courseId], queryFn: () => api<MaterialFolder[]>(`/courses/${courseId}/folders`) })
   const query = useQuery({
@@ -79,42 +125,128 @@ export function MaterialsPage() {
   const units = curriculum.data || []
   const materials = query.data?.items || []
 
-  async function upload(files: FileList | File[]) {
-    const items = Array.from(files)
-    if (!items.length) return
+  function openUpload() {
+    setUploadFolder(folderId === 'all' ? '' : folderId)
+    setUploadUnit('')
     setUploadOpen(true)
-    const ids = items.map(() => crypto.randomUUID())
-    setUploadItems((current) => [...current, ...items.map((file, index) => ({ id: ids[index], name: file.name, progress: 0, status: 'uploading' as const }))])
-    for (let index = 0; index < items.length; index += 1) {
-      const file = items[index]
-      const id = ids[index]
+  }
+
+  function updateUploadItem(id: string, patch: Partial<UploadItem>) {
+    setUploadItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item))
+  }
+
+  function addFiles(files: FileList | File[]) {
+    if (uploading) return
+    const accepted: UploadItem[] = []
+    const rejected: string[] = []
+    for (const file of Array.from(files)) {
       const extension = file.name.split('.').pop()?.toLowerCase() || ''
       const contentType = mimeByExtension[extension]
-      let materialId: string | null = null
-      try {
-        if (!contentType || !mimeByExtension[extension]) throw new Error('Formato no admitido. Usa PDF, DOCX, PPTX o TXT.')
-        if (configuration.data && file.size > configuration.data.max_upload_mb * 1024 * 1024) throw new Error(`El archivo supera el límite de ${configuration.data.max_upload_mb} MB.`)
-        const ticket = await api<UploadTicket>(`/courses/${courseId}/materials/uploads`, {
-          method: 'POST', body: jsonBody({ name: file.name, content_type: contentType, size_bytes: file.size, folder_id: uploadFolder || null, unit_id: uploadUnit || null }),
-        })
-        materialId = ticket.material_id
-        await sendFile(ticket.upload_url, ticket.headers, file, (progress) => setUploadItems((current) => current.map((item) => item.id === id ? { ...item, progress } : item)))
-        await api<Material>(`/materials/${ticket.material_id}/complete`, { method: 'POST' })
-        setUploadItems((current) => current.map((item) => item.id === id ? { ...item, progress: 100, status: 'ready' } : item))
-      } catch (error) {
-        let message = error instanceof Error ? error.message : 'Error de carga'
-        if (materialId) {
-          try { await api(`/materials/${materialId}`, { method: 'DELETE' }) }
-          catch { message += ' El registro quedó en la biblioteca; elimínalo antes de volver a subir el archivo.' }
-        }
-        setUploadItems((current) => current.map((item) => item.id === id ? { ...item, status: 'failed', error: message } : item))
+      if (!contentType) { rejected.push(`${file.name}: formato no admitido`); continue }
+      if (file.size <= 0) { rejected.push(`${file.name}: archivo vacío`); continue }
+      if (configuration.data && file.size > configuration.data.max_upload_mb * 1024 * 1024) {
+        rejected.push(`${file.name}: supera ${configuration.data.max_upload_mb} MB`)
+        continue
       }
+      accepted.push({
+        id: crypto.randomUUID(), file, name: file.name, size: file.size, contentType,
+        folderId: uploadFolder, unitId: uploadUnit, progress: 0, status: 'pending',
+      })
     }
-    await queryClient.invalidateQueries({ queryKey: ['materials', courseId] })
-    await queryClient.invalidateQueries({ queryKey: ['folders', courseId] })
-    await queryClient.invalidateQueries({ queryKey: ['course', courseId] })
-    await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    if (accepted.length) setUploadItems((current) => [...current, ...accepted])
+    if (rejected.length) toast(rejected.join(' '), 'error')
   }
+
+  function removeUploadItem(id: string) {
+    setUploadItems((current) => current.filter((item) => item.id !== id))
+  }
+
+  function clearFinishedUploads() {
+    setUploadItems((current) => current.filter((item) => !finishedStatuses.includes(item.status)))
+  }
+
+  async function uploadOne(item: UploadItem) {
+    updateUploadItem(item.id, { status: 'uploading', progress: 0, error: undefined })
+    let materialId: string | null = null
+    try {
+      const ticket = await api<UploadTicket>(`/courses/${courseId}/materials/uploads`, {
+        method: 'POST',
+        body: jsonBody({
+          name: item.name, content_type: item.contentType, size_bytes: item.size,
+          folder_id: item.folderId || null, unit_id: item.unitId || null,
+        }),
+      })
+      materialId = ticket.material_id
+      updateUploadItem(item.id, { materialId })
+      await sendFile(ticket.upload_url, ticket.headers, item.file,
+        (progress) => updateUploadItem(item.id, { progress }))
+      updateUploadItem(item.id, { status: 'verifying', progress: 100 })
+      const result = await api<UploadResult>(`/materials/${ticket.material_id}/complete`, { method: 'POST' })
+      if (!result.storage_confirmed) throw new Error('El almacenamiento no confirmó el archivo. Vuelve a intentarlo.')
+      if ((result.unit_id || null) !== (item.unitId || null)) {
+        throw new Error('El archivo se guardó con una unidad distinta a la seleccionada.')
+      }
+      if (!['queued', 'processing', 'ready'].includes(result.status)) {
+        throw new Error('El archivo no quedó en cola de procesamiento.')
+      }
+      updateUploadItem(item.id, {
+        status: result.status === 'ready' ? 'ready' : result.status === 'processing' ? 'processing' : 'queued',
+        progress: 100, error: undefined,
+      })
+      return true
+    } catch (error) {
+      let message = error instanceof Error ? error.message : 'Error de carga'
+      if (materialId) {
+        try { await api(`/materials/${materialId}`, { method: 'DELETE' }) }
+        catch { message += ' El registro quedó en la biblioteca; elimínalo antes de volver a subir el archivo.' }
+      }
+      updateUploadItem(item.id, { status: 'failed', error: message })
+      return false
+    }
+  }
+
+  async function startUpload() {
+    const pending = uploadItems.filter((item) => item.status === 'pending')
+    if (!pending.length || uploading) return
+    setUploading(true)
+    try {
+      let failed = 0
+      for (const item of pending) {
+        if (!await uploadOne(item)) failed += 1
+      }
+      await queryClient.invalidateQueries({ queryKey: ['materials', courseId] })
+      await queryClient.invalidateQueries({ queryKey: ['folders', courseId] })
+      await queryClient.invalidateQueries({ queryKey: ['course', courseId] })
+      await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      if (failed) toast(`${failed} archivo${failed === 1 ? '' : 's'} no se pudo subir. Revisa la cola.`, 'error')
+      else toast('Archivos subidos y confirmados en el almacenamiento.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  useEffect(() => {
+    const items = query.data?.items
+    if (!items?.length) return
+    const byId = new Map(items.map((material) => [material.id, material]))
+    setUploadItems((current) => {
+      let changed = false
+      const next = current.map((item) => {
+        if (!item.materialId) return item
+        const material = byId.get(item.materialId)
+        if (!material) return item
+        const status = syncableUploadStatus[material.status]
+        if (!status || status === item.status) return item
+        changed = true
+        return {
+          ...item,
+          status,
+          error: status === 'failed' ? material.error || 'El procesamiento del archivo falló.' : undefined,
+        }
+      })
+      return changed ? next : current
+    })
+  }, [query.data])
 
   const createFolder = useMutation({
     mutationFn: () => api<MaterialFolder>(`/courses/${courseId}/folders`, { method: 'POST', body: jsonBody({ name: newFolder }) }),
@@ -214,9 +346,12 @@ export function MaterialsPage() {
   if (query.isLoading || foldersQuery.isLoading || curriculum.isLoading || configuration.isLoading) return <LoadingState />
   if (query.isError || foldersQuery.isError || curriculum.isError || configuration.isError) return <ErrorState message="No pudimos cargar la biblioteca del curso." retry={() => { void query.refetch(); void foldersQuery.refetch() }} />
   const currentFolder = folders.find((folder) => folder.id === folderId)
+  const pendingUploads = uploadItems.filter((item) => item.status === 'pending')
+  const canUpload = pendingUploads.length > 0 && !uploading
+  const hasFinishedUploads = uploadItems.some((item) => finishedStatuses.includes(item.status))
 
   return <>
-    <PageHeader title="Materiales de clase" description="Administra archivos y enlaces que respaldan el estudio y el tutor del curso." actions={<><Button variant="outline" onClick={() => setLinkOpen(true)}><Link2 size={16} />Añadir enlace</Button><Button onClick={() => { setUploadFolder(folderId === 'all' ? '' : folderId); setUploadOpen(true); setTimeout(() => inputRef.current?.click(), 0) }}><UploadCloud size={16} />Subir archivos</Button></>} />
+    <PageHeader title="Materiales de clase" description="Administra archivos y enlaces que respaldan el estudio y el tutor del curso." actions={<><Button variant="outline" onClick={() => setLinkOpen(true)}><Link2 size={16} />Añadir enlace</Button><Button onClick={openUpload}><UploadCloud size={16} />Subir archivos</Button></>} />
     {!configuration.data!.storage_configured && <div className="inline-alert alert-warning"><Folder size={17} /><span>El almacenamiento de Neon no está configurado. Completa <code>AWS_*</code> y <code>NEON_STORAGE_BUCKET</code> en el servidor.</span></div>}
     {!configuration.data!.ai_configured && <div className="inline-alert alert-info"><Sparkles size={17} /><span>La extracción de texto funciona sin IA. Configura el proveedor para generar embeddings y borradores de preguntas.</span></div>}
     <div className="materials-layout">
@@ -227,19 +362,54 @@ export function MaterialsPage() {
       <section className="materials-main">
          <div className="materials-toolbar"><div><h2>{folderId === 'all' ? 'Todos los materiales' : currentFolder?.name || 'Carpeta'}</h2><p className="muted-text text-small">{query.data?.total || 0} recurso{query.data?.total === 1 ? '' : 's'}{folderId === 'all' ? ' en este curso' : ' en esta carpeta'}</p></div><div className="materials-search"><TextInput type="search" aria-label="Buscar material" placeholder="Buscar materiales…" value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0) }} /></div></div>
         <Card><div className="materials-list">
-         {!materials.length ? <EmptyState icon={FileText} title={search ? 'No hay resultados' : query.data!.total ? 'No hay materiales en esta página' : folderId === 'all' ? 'Todavía no hay materiales' : 'Esta carpeta está vacía'} description={search ? 'Prueba con otra búsqueda.' : 'Sube apuntes, guías o presentaciones, o agrega un enlace de referencia.'} action={!search && query.data!.total === 0 && <div className="empty-actions"><Button onClick={() => { setUploadFolder(folderId === 'all' ? '' : folderId); setUploadOpen(true); setTimeout(() => inputRef.current?.click(), 0) }}><UploadCloud size={15} />Subir archivos</Button><Button variant="outline" onClick={() => setLinkOpen(true)}><Link2 size={15} />Añadir enlace</Button></div>} /> : materials.map((material) => <MaterialRow key={material.id} material={material} onOpen={() => void openFile(material)} onEdit={() => { setEditing(material); setEditName(material.name); setEditFolder(material.folder_id || '') }} onDelete={() => void removeMaterial(material)} onRetry={() => void retry(material)} onGenerate={() => void generateQuestion(material)} onDownload={() => void downloadMaterial(material)} aiReady={configuration.data!.ai_configured} />)}
+         {!materials.length ? <EmptyState icon={FileText} title={search ? 'No hay resultados' : query.data!.total ? 'No hay materiales en esta página' : folderId === 'all' ? 'Todavía no hay materiales' : 'Esta carpeta está vacía'} description={search ? 'Prueba con otra búsqueda.' : 'Sube apuntes, guías o presentaciones, o agrega un enlace de referencia.'} action={!search && query.data!.total === 0 && <div className="empty-actions"><Button onClick={openUpload}><UploadCloud size={15} />Subir archivos</Button><Button variant="outline" onClick={() => setLinkOpen(true)}><Link2 size={15} />Añadir enlace</Button></div>} /> : materials.map((material) => <MaterialRow key={material.id} material={material} onOpen={() => void openFile(material)} onEdit={() => { setEditing(material); setEditName(material.name); setEditFolder(material.folder_id || '') }} onDelete={() => void removeMaterial(material)} onRetry={() => void retry(material)} onGenerate={() => void generateQuestion(material)} onDownload={() => void downloadMaterial(material)} aiReady={configuration.data!.ai_configured} />)}
          </div></Card>
          <PaginationControls total={query.data!.total} limit={limit} offset={offset} onChange={setOffset} />
         <p className="materials-help">PDF, DOCX, PPTX y TXT · máximo {configuration.data!.max_upload_mb} MB por archivo. Los enlaces se abren en una pestaña nueva.</p>
       </section>
     </div>
 
-    <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title="Subir materiales" description="Los archivos se guardan en el almacenamiento privado de Neon y se procesan para su consulta." wide>
-      <div className="upload-controls"><Field label="Carpeta"><Select value={uploadFolder} onChange={(event) => setUploadFolder(event.target.value)}><option value="">General</option>{folders.map((folder) => <option value={folder.id} key={folder.id}>{folder.name}</option>)}</Select></Field><Field label="Unidad"><Select value={uploadUnit} onChange={(event) => setUploadUnit(event.target.value)}><option value="">Sin unidad</option>{units.map((unit) => <option value={unit.id} key={unit.id}>{unit.title}</option>)}</Select></Field><Button variant="outline" onClick={() => inputRef.current?.click()}><UploadCloud size={16} />Elegir archivos</Button></div>
-      <input ref={inputRef} className="visually-hidden" type="file" multiple accept=".pdf,.docx,.pptx,.txt" onChange={(event) => { if (event.target.files) void upload(event.target.files); event.target.value = '' }} />
-      <button className="dropzone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void upload(event.dataTransfer.files) }}><span className="dropzone-icon"><UploadCloud size={22} /></span><strong>Arrastra archivos aquí o selecciónalos</strong><small>PDF, DOCX, PPTX o TXT · hasta {configuration.data!.max_upload_mb} MB por archivo</small></button>
-      {!!uploadItems.length && <div className="upload-queue"><div className="upload-queue-title"><strong>Cargas de esta sesión</strong><Button variant="ghost" size="small" onClick={() => setUploadItems((current) => current.filter((item) => item.status === 'uploading'))}>Limpiar terminadas</Button></div>{uploadItems.map((item) => <div className="upload-row" key={item.id}><span className="file-type-mark">{item.name.split('.').pop()?.toUpperCase()}</span><div className="upload-row-info"><strong>{item.name}</strong>{item.error ? <small className="field-error">{item.error}</small> : <div className="progress-track"><i style={{ width: `${item.progress}%` }} /></div>}</div><span className="upload-status">{item.status === 'uploading' ? `${item.progress}%` : item.status === 'ready' ? <Check size={16} /> : <X size={16} />}</span></div>)}</div>}
-      <p className="field-hint">Al cerrar este cuadro, las cargas en curso continúan. Los archivos procesados quedarán listados en la biblioteca.</p>
+    <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title="Subir materiales" description="Los archivos se guardan en el almacenamiento privado de Neon y se procesan para su consulta." wide
+      onSubmit={(event) => { event.preventDefault(); void startUpload() }}
+      submitLabel={uploading ? 'Subiendo…' : 'Subir archivos'} busy={uploading} submitDisabled={!canUpload}>
+      <div className="upload-controls">
+        <Field label="Carpeta predeterminada" hint="Se aplica a los archivos nuevos."><Select value={uploadFolder} onChange={(event) => setUploadFolder(event.target.value)} disabled={uploading}><option value="">General</option>{folders.map((folder) => <option value={folder.id} key={folder.id}>{folder.name}</option>)}</Select></Field>
+        <Field label="Unidad predeterminada" hint="Puedes cambiarla en cada archivo."><Select value={uploadUnit} onChange={(event) => setUploadUnit(event.target.value)} disabled={uploading}><option value="">Sin unidad</option>{units.map((unit) => <option value={unit.id} key={unit.id}>{unit.title}</option>)}</Select></Field>
+        <Button type="button" variant="outline" onClick={() => inputRef.current?.click()} disabled={uploading}><UploadCloud size={16} />Elegir archivos</Button>
+      </div>
+      <input ref={inputRef} className="visually-hidden" type="file" multiple accept=".pdf,.docx,.pptx,.txt" onChange={(event) => { if (event.target.files) addFiles(event.target.files); event.target.value = '' }} />
+      <button type="button" className="dropzone" disabled={uploading} onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files) }}>
+        <span className="dropzone-icon"><UploadCloud size={22} /></span>
+        <strong>Arrastra archivos aquí o selecciónalos</strong>
+        <small>PDF, DOCX, PPTX o TXT · hasta {configuration.data!.max_upload_mb} MB por archivo</small>
+      </button>
+      {!!uploadItems.length && <div className="upload-queue">
+        <div className="upload-queue-title">
+          <strong>Archivos ({uploadItems.length})</strong>
+          {hasFinishedUploads && <Button type="button" variant="ghost" size="small" onClick={clearFinishedUploads}>Limpiar terminados</Button>}
+        </div>
+        {uploadItems.map((item) => <div className="upload-row" key={item.id}>
+          <span className="file-type-mark">{item.name.split('.').pop()?.toUpperCase()}</span>
+          <div className="upload-row-info">
+            <strong title={item.name}>{item.name}</strong>
+            {item.status === 'pending' ? <>
+              <small className="upload-detail">{formatSize(item.size)}</small>
+              <div className="upload-destinations">
+                <label className="upload-destination"><span>Carpeta</span><Select aria-label={`Carpeta de ${item.name}`} value={item.folderId} onChange={(event) => updateUploadItem(item.id, { folderId: event.target.value })} disabled={uploading}><option value="">General</option>{folders.map((folder) => <option value={folder.id} key={folder.id}>{folder.name}</option>)}</Select></label>
+                <label className="upload-destination"><span>Unidad</span><Select aria-label={`Unidad de ${item.name}`} value={item.unitId} onChange={(event) => updateUploadItem(item.id, { unitId: event.target.value })} disabled={uploading}><option value="">Sin unidad</option>{units.map((unit) => <option value={unit.id} key={unit.id}>{unit.title}</option>)}</Select></label>
+              </div>
+            </> : <>
+              <small className={item.error ? 'field-error' : 'upload-detail'}>{item.error || uploadStatusDetail(item)}</small>
+              {item.status === 'uploading' && <div className="progress-track"><i style={{ width: `${item.progress}%` }} /></div>}
+            </>}
+          </div>
+          <div className="upload-row-status">
+            <Badge tone={uploadTone[item.status]}>{uploadStatusLabel(item)}</Badge>
+            {item.status === 'pending' && <Button type="button" variant="ghost" size="small" aria-label={`Quitar ${item.name}`} onClick={() => removeUploadItem(item.id)}><X size={15} /></Button>}
+          </div>
+        </div>)}
+      </div>}
+      <p className="field-hint">Los archivos se suben solo al pulsar “Subir archivos”. Al cerrar este cuadro, las cargas en curso continúan.</p>
     </Modal>
 
     <Modal open={linkOpen} onClose={() => setLinkOpen(false)} title="Añadir enlace" description="Guarda un recurso web dentro de la biblioteca." onSubmit={(event) => { event.preventDefault(); createLink.mutate() }} submitLabel="Guardar enlace" busy={createLink.isPending}>

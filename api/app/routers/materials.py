@@ -17,6 +17,7 @@ from app.schemas import (
     LinkCreate,
     MaterialOut,
     MaterialUpdate,
+    UploadCompleteOut,
     UploadRequest,
 )
 from app.services.audit import record_event
@@ -182,14 +183,12 @@ async def begin_upload(
             "headers": {"Content-Type": material.content_type}, "expires_in": 300}
 
 
-@router.post("/materials/{material_id}/complete", response_model=MaterialOut)
+@router.post("/materials/{material_id}/complete", response_model=UploadCompleteOut)
 async def complete_upload(
     material_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
-) -> Material:
+) -> UploadCompleteOut:
     material = await owned_material(material_id, teacher, db, lock=True)
-    if material.status in {"queued", "processing", "ready"}:
-        return material
-    if material.status != "uploading" or not material.object_key:
+    if material.status not in {"uploading", "queued", "processing", "ready"} or not material.object_key:
         raise HTTPException(status_code=409, detail="Material is not awaiting upload confirmation")
     client = storage_client()
     if client is None:
@@ -202,12 +201,16 @@ async def complete_upload(
         raise HTTPException(status_code=409, detail="Uploaded file size does not match the declared size")
     if object_info.get("ContentType") and object_info["ContentType"] != material.content_type:
         raise HTTPException(status_code=409, detail="Uploaded file type does not match the declared type")
-    material.status = "queued"
-    db.add(ProcessingJob(material_id=material.id))
-    record_event(db, teacher.id, "material.upload.completed", "material", material.id, material.course_id)
-    await db.commit()
-    await db.refresh(material)
-    return material
+    if material.status == "uploading":
+        material.status = "queued"
+        db.add(ProcessingJob(material_id=material.id))
+        record_event(db, teacher.id, "material.upload.completed", "material", material.id, material.course_id)
+        await db.commit()
+        await db.refresh(material)
+    return UploadCompleteOut.model_validate({
+        **MaterialOut.model_validate(material).model_dump(),
+        "storage_confirmed": True,
+    })
 
 
 @router.post("/courses/{course_id}/materials/links", status_code=201, response_model=MaterialOut)

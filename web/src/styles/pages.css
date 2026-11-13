@@ -119,18 +119,23 @@
 .upload-controls .form-field { margin-block-end: 15px; }
 .dropzone { display: flex; width: 100%; min-height: 145px; flex-direction: column; align-items: center; justify-content: center; gap: 5px; margin-block-start: 3px; padding: 20px; border: 1px dashed hsl(var(--mf) / .55); border-radius: calc(var(--r) + 2px); color: hsl(var(--fg)); background: hsl(var(--mu) / .35); }
 .dropzone:hover { border-color: hsl(var(--fg) / .65); background: hsl(var(--mu) / .65); }
+.dropzone:disabled { cursor: wait; opacity: .65; }
 .dropzone-icon { display: grid; place-items: center; width: 39px; height: 39px; margin-block-end: 3px; border-radius: 50%; background: hsl(var(--bg)); }
 .dropzone strong { font-size: 12px; font-weight: 610; }
 .dropzone small { color: hsl(var(--mf)); font-size: 10.5px; }
 .upload-queue { margin-block-start: 15px; }
 .upload-queue-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-block-end: 5px; font-size: 11.5px; }
-.upload-row { display: flex; align-items: center; gap: 10px; padding-block: 9px; border-block-start: 1px solid hsl(var(--br)); }
+.upload-row { display: flex; align-items: flex-start; gap: 10px; padding-block: 9px; border-block-start: 1px solid hsl(var(--br)); }
 .upload-row-info { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; }
 .upload-row-info strong { overflow: hidden; font-size: 10.5px; font-weight: 580; text-overflow: ellipsis; white-space: nowrap; }
+.upload-row-status { display: flex; align-items: center; gap: 3px; padding-block-start: 1px; }
+.upload-detail { color: hsl(var(--mf)); font-size: 10px; }
+.upload-destinations { display: flex; flex-wrap: wrap; gap: 7px; }
+.upload-destination { display: flex; min-width: 128px; flex: 1 1 128px; flex-direction: column; gap: 3px; }
+.upload-destination > span { color: hsl(var(--mf)); font-size: 9.5px; font-weight: 610; letter-spacing: .02em; }
+.upload-destination .select-input { min-height: 31px; padding-block: 4px; font-size: 10.5px; }
 .progress-track { width: 100%; height: 5px; overflow: hidden; border-radius: 99px; background: hsl(var(--mu)); }
 .progress-track i { display: block; height: 100%; border-radius: inherit; background: hsl(var(--in)); transition: width .15s; }
-.upload-status { color: hsl(var(--mf)); font-size: 10px; }
-.upload-status svg { color: hsl(var(--ok)); }
 .preview-intro { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-block-end: 12px; color: hsl(var(--mf)); font-size: 12px; }
 .text-preview { max-height: 55dvh; overflow: auto; padding: 15px; border: 1px solid hsl(var(--br)); border-radius: var(--r); background: hsl(var(--mu) / .25); }
 .text-preview p { margin-block-end: 13px; font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
@@ -318,6 +323,11 @@
   .material-error { margin-inline-start: 0; }
   .upload-controls { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .upload-controls > .button { justify-self: start; margin-block-end: 15px; }
+  .upload-row { flex-wrap: wrap; }
+  .upload-row-info { flex-basis: calc(100% - 46px); }
+  .upload-row-status { margin-inline-start: 46px; }
+  .upload-destinations { flex-direction: column; }
+  .upload-destination { flex-basis: auto; min-width: 0; }
   .review-form { grid-template-columns: minmax(0, 1fr); }
   .review-form > .button { grid-column: 1; justify-self: stretch; }
   .question-row { flex-wrap: wrap; }

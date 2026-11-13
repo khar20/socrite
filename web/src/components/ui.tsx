@@ -58,9 +58,10 @@ export function ErrorState({ message, retry }: { message: string; retry?: () => 
   return <div className="error-state"><CircleAlert size={19} /><div><strong>No se pudo cargar</strong><p>{message}</p>{retry && <Button variant="outline" size="small" onClick={retry}>Reintentar</Button>}</div></div>
 }
 
-export function Modal({ title, description, open, onClose, children, onSubmit, submitLabel, busy = false, wide = false }: {
+export function Modal({ title, description, open, onClose, children, onSubmit, submitLabel, busy = false, submitDisabled = false, wide = false }: {
   title: string; description?: string; open: boolean; onClose: () => void; children: ReactNode
-  onSubmit?: (event: FormEvent<HTMLFormElement>) => void; submitLabel?: string; busy?: boolean; wide?: boolean
+  onSubmit?: (event: FormEvent<HTMLFormElement>) => void; submitLabel?: string; busy?: boolean
+  submitDisabled?: boolean; wide?: boolean
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const titleId = useId()
@@ -74,7 +75,7 @@ export function Modal({ title, description, open, onClose, children, onSubmit, s
   const content = <>
     <div className="modal-heading"><div><h2 id={titleId}>{title}</h2>{description && <p id={descriptionId} className="muted-text text-small">{description}</p>}</div><button type="button" className="icon-button" onClick={onClose} aria-label="Cerrar"> <X size={18} /></button></div>
     <div className="modal-body">{children}</div>
-    {(onSubmit || submitLabel) && <div className="modal-actions"><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button>{onSubmit && <Button type="submit" disabled={busy}>{busy && <LoaderCircle className="spin" size={15} />}{submitLabel || 'Guardar'}</Button>}</div>}
+    {(onSubmit || submitLabel) && <div className="modal-actions"><Button type="button" variant="outline" onClick={onClose}>Cancelar</Button>{onSubmit && <Button type="submit" disabled={busy || submitDisabled}>{busy && <LoaderCircle className="spin" size={15} />}{submitLabel || 'Guardar'}</Button>}</div>}
   </>
   return <dialog ref={dialog} aria-labelledby={titleId} aria-describedby={description ? descriptionId : undefined} className={`modal-dialog${wide ? ' modal-wide' : ''}`} onCancel={(event) => { event.preventDefault(); onClose() }} onClose={onClose}>
     {onSubmit ? <form onSubmit={onSubmit}>{content}</form> : content}

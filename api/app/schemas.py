@@ -221,6 +221,10 @@ class MaterialOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class UploadCompleteOut(MaterialOut):
+    storage_confirmed: bool
+
+
 class RubricCriterion(BaseModel):
     criterion: str = Field(min_length=1, max_length=500)
 
