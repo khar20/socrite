@@ -55,6 +55,7 @@ class AccountNamesIn(BaseModel):
 class RegisterIn(AccountNamesIn):
     email: EmailStr
     password: str = Field(min_length=12, max_length=128)
+    student_data_consent: bool = False
 
 
 class LoginIn(BaseModel):

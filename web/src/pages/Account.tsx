@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { KeyRound, Save } from 'lucide-react'
+import { Eye, EyeOff, KeyRound, Save } from 'lucide-react'
 import { api, jsonBody } from '../api'
 import { useAuth } from '../auth-context'
 import { Button, Card, Field, PageHeader, TextInput, useToast } from '../components/ui'
@@ -10,6 +10,11 @@ export function AccountPage() {
   const toast = useToast()
   const [names, setNames] = useState({ first_name: '', paternal_last_name: '', maternal_last_name: '' })
   const [passwords, setPasswords] = useState({ current_password: '', new_password: '', confirm_password: '' })
+  const [visiblePasswords, setVisiblePasswords] = useState({ current_password: false, new_password: false, confirm_password: false })
+
+  function passwordField(name: keyof typeof passwords, label: string, autocomplete: string, minLength = 1) {
+    return <Field label={label} required><div className="password-input-wrap"><TextInput type={visiblePasswords[name] ? 'text' : 'password'} autoComplete={autocomplete} value={passwords[name]} onChange={(event) => setPasswords({ ...passwords, [name]: event.target.value })} required minLength={minLength} maxLength={128} /><button type="button" className="password-toggle" onClick={() => setVisiblePasswords({ ...visiblePasswords, [name]: !visiblePasswords[name] })} aria-label={visiblePasswords[name] ? 'Ocultar contraseña' : 'Mostrar contraseña'}>{visiblePasswords[name] ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></Field>
+  }
 
   useEffect(() => {
     if (profile) setNames({
@@ -50,9 +55,9 @@ export function AccountPage() {
         <div className="form-actions"><Button type="submit" disabled={saveNames.isPending}><Save size={15} />Guardar datos</Button></div>
       </form></Card>
       <Card><div className="card-heading"><h2>Cambiar contraseña</h2><p className="muted-text text-small">Al cambiarla, se cerrarán las demás sesiones de tu cuenta.</p></div><form className="card-content settings-form" onSubmit={(event) => { event.preventDefault(); changePassword.mutate() }}>
-        <Field label="Contraseña actual" required><TextInput type="password" autoComplete="current-password" value={passwords.current_password} onChange={(event) => setPasswords({ ...passwords, current_password: event.target.value })} required maxLength={128} /></Field>
-        <Field label="Nueva contraseña" hint="Usa al menos 12 caracteres." required><TextInput type="password" autoComplete="new-password" value={passwords.new_password} onChange={(event) => setPasswords({ ...passwords, new_password: event.target.value })} required minLength={12} maxLength={128} /></Field>
-        <Field label="Confirma la nueva contraseña" required><TextInput type="password" autoComplete="new-password" value={passwords.confirm_password} onChange={(event) => setPasswords({ ...passwords, confirm_password: event.target.value })} required minLength={12} maxLength={128} /></Field>
+        {passwordField('current_password', 'Contraseña actual', 'current-password')}
+        {passwordField('new_password', 'Nueva contraseña', 'new-password', 12)}
+        {passwordField('confirm_password', 'Confirma la nueva contraseña', 'new-password', 12)}
         {passwords.new_password && passwords.confirm_password && passwords.new_password !== passwords.confirm_password && <p className="form-error">Las contraseñas no coinciden.</p>}
         <div className="form-actions"><Button type="submit" disabled={changePassword.isPending || passwords.new_password !== passwords.confirm_password}><KeyRound size={15} />Actualizar contraseña</Button></div>
       </form></Card>

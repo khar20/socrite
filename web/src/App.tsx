@@ -19,6 +19,7 @@ import { AccountPage } from './pages/Account'
 import { StudentAllowlistPage } from './pages/StudentAllowlist'
 import { AdminUsersPage } from './pages/AdminUsers'
 import { CourseAnalyticsPage } from './pages/CourseAnalytics'
+import { ConsentPage } from './pages/Consent'
 
 function ProtectedLayout({ role }: { role: 'teacher' | 'student' }) {
   const { profile, loading } = useAuth()
@@ -40,6 +41,7 @@ function InvitationRoute() {
 export default function App() {
   const { profile } = useAuth()
   return <Routes>
+    <Route path="/consentimiento-informado" element={<ConsentPage />} />
     <Route path="/login" element={profile ? <Navigate to={profile.role === 'student' ? '/student' : '/teacher'} replace /> : <LoginPage />} />
     <Route path="/access-denied" element={<AccessDenied />} />
     <Route path="/join/:token" element={<InvitationRoute />} />

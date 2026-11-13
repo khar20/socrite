@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
-import { BookOpen, Lightbulb, LockKeyhole, Mail } from 'lucide-react'
+import { BookOpen, Eye, EyeOff, Lightbulb, LockKeyhole, Mail } from 'lucide-react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { api, jsonBody } from '../api'
 import { useAuth } from '../auth-context'
@@ -16,6 +16,9 @@ export function LoginPage() {
   const [mode, setMode] = useState<Mode>('sign-in')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [studentConsent, setStudentConsent] = useState(false)
+  const [registrationRole, setRegistrationRole] = useState<string | null>(null)
   const [firstName, setFirstName] = useState('')
   const [paternalLastName, setPaternalLastName] = useState('')
   const [maternalLastName, setMaternalLastName] = useState('')
@@ -39,6 +42,14 @@ export function LoginPage() {
     setError('')
     try {
       const isSignUp = mode === 'sign-up'
+      if (isSignUp) {
+        const result = await api<{ role: string | null }>(`/auth/registration-role?email=${encodeURIComponent(email)}`)
+        setRegistrationRole(result.role)
+        if (result.role === 'student' && !studentConsent) {
+          setError('Debes aceptar el consentimiento informado para registrarte como estudiante.')
+          return
+        }
+      }
       await api<User>(isSignUp ? '/auth/register' : '/auth/login', {
         method: 'POST',
         body: jsonBody(isSignUp ? {
@@ -54,6 +65,16 @@ export function LoginPage() {
       setError(reason instanceof Error ? reason.message : 'No se pudo completar el acceso.')
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function checkRegistrationRole() {
+    if (mode !== 'sign-up' || !email.trim()) return
+    try {
+      const result = await api<{ role: string | null }>(`/auth/registration-role?email=${encodeURIComponent(email)}`)
+      setRegistrationRole(result.role)
+    } catch {
+      setRegistrationRole(null)
     }
   }
 
@@ -78,12 +99,13 @@ export function LoginPage() {
               <Field label="Apellido materno" required><TextInput value={maternalLastName} onChange={(event) => setMaternalLastName(event.target.value.toUpperCase())} required maxLength={100} /></Field>
             </div>
           </>}
-          <Field label="Correo electrónico" required><div className="input-with-icon"><Mail size={16} /><TextInput type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required maxLength={320} placeholder="nombre@universidad.edu" /></div></Field>
-          <Field label="Contraseña" hint={mode === 'sign-up' ? 'Usa al menos 12 caracteres.' : undefined} required><div className="input-with-icon"><LockKeyhole size={16} /><TextInput type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'} required minLength={mode === 'sign-up' ? 12 : 1} maxLength={128} /></div></Field>
-          <Button type="submit" size="large" className="login-submit" disabled={busy}>{busy ? 'Un momento…' : mode === 'sign-in' ? 'Ingresar' : 'Crear cuenta'}</Button>
+          <Field label="Correo electrónico" required><div className="input-with-icon"><Mail size={16} /><TextInput type="email" value={email} onChange={(event) => { setEmail(event.target.value); setRegistrationRole(null); setStudentConsent(false) }} onBlur={() => void checkRegistrationRole()} autoComplete="email" required maxLength={320} placeholder="nombre@universidad.edu" /></div></Field>
+          <Field label="Contraseña" hint={mode === 'sign-up' ? 'Usa al menos 12 caracteres.' : undefined} required><div className="password-input-wrap"><div className="input-with-icon"><LockKeyhole size={16} /><TextInput type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'} required minLength={mode === 'sign-up' ? 12 : 1} maxLength={128} /></div><button type="button" className="password-toggle" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}>{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></Field>
+          {mode === 'sign-up' && registrationRole === 'student' && <label className="consent-check"><input type="checkbox" checked={studentConsent} onChange={(event) => setStudentConsent(event.target.checked)} required /><span>Acepto el <Link to="/consentimiento-informado">Consentimiento informado para uso de sus datos</Link>.</span></label>}
+          <Button type="submit" size="large" className="login-submit" disabled={busy || (mode === 'sign-up' && registrationRole === 'student' && !studentConsent)}>{busy ? 'Un momento…' : mode === 'sign-in' ? 'Ingresar' : 'Crear cuenta'}</Button>
         </form>
         <div className="login-switch">{mode === 'sign-in' ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?'}{' '}
-          <button type="button" disabled={busy} onClick={() => { setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in'); setError('') }}>{mode === 'sign-in' ? 'Crear cuenta' : 'Iniciar sesión'}</button>
+          <button type="button" disabled={busy} onClick={() => { setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in'); setError(''); setRegistrationRole(null); setStudentConsent(false) }}>{mode === 'sign-in' ? 'Crear cuenta' : 'Iniciar sesión'}</button>
         </div>
         <div className="teacher-note"><span className="teacher-note-dot" />La cuenta se activa solo si el correo está autorizado.</div>
       </div>

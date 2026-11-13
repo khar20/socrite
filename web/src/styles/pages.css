@@ -190,6 +190,13 @@
 .settings-note .card-content { padding: 16px; }
 .note-icon { display: grid; place-items: center; width: 32px; height: 32px; margin-block-end: 9px; border-radius: 8px; background: hsl(var(--mu)); }
 .settings-note p { margin-block-start: 5px; color: hsl(var(--mf)); font-size: 10.5px; line-height: 1.55; }
+.consent-page { min-height: 100dvh; padding: clamp(20px, 5vw, 64px) 16px; background: hsl(var(--mu) / .45); }
+.consent-document { width: min(760px, 100%); margin-inline: auto; padding: clamp(22px, 5vw, 48px); }
+.consent-document > h1 { margin-block: 10px; font-size: clamp(25px, 4vw, 34px); line-height: 1.15; }
+.consent-document > section { margin-block-start: 26px; }
+.consent-document section h2 { margin-block-end: 7px; font-size: 16px; }
+.consent-document section p { color: hsl(var(--mf)); font-size: 13px; line-height: 1.7; }
+.consent-page-actions { margin-block-start: 30px; }
 .login-screen { display: grid; min-height: 100dvh; grid-template-columns: minmax(320px, .9fr) minmax(0, 1.1fr); background: hsl(var(--bg)); }
 .login-aside { display: flex; min-height: 100%; flex-direction: column; padding: clamp(24px, 5vw, 68px); color: white; background: hsl(240 8% 8%); }
 .login-aside .brand-lockup { padding: 0; }

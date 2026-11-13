@@ -36,6 +36,13 @@
 .input-with-icon { position: relative; }
 .input-with-icon > svg { position: absolute; inset-block-start: 11px; inset-inline-start: 11px; color: hsl(var(--mf)); pointer-events: none; }
 .input-with-icon .text-input { padding-inline-start: 36px; }
+.password-input-wrap { position: relative; }
+.password-input-wrap .text-input { padding-inline-end: 42px; }
+.password-toggle { position: absolute; inset-block-start: 2px; inset-inline-end: 2px; display: grid; place-items: center; width: 34px; height: 33px; border: 0; border-radius: var(--r); color: hsl(var(--mf)); background: transparent; cursor: pointer; }
+.password-toggle:hover { color: hsl(var(--fg)); background: hsl(var(--mu)); }
+.consent-check { display: flex; align-items: flex-start; gap: 9px; margin-block: 2px 16px; color: hsl(var(--fg)); font-size: 11.5px; line-height: 1.5; }
+.consent-check input { margin-block-start: 2px; accent-color: hsl(var(--pr)); }
+.consent-check a { color: hsl(var(--pr)); text-decoration: underline; text-underline-offset: 2px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .form-actions { display: flex; justify-content: flex-end; padding-block-start: 3px; }
 .stats-grid .content-card { height: 100%; }

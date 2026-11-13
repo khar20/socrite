@@ -26,6 +26,11 @@ from app.schemas import AccountNamesIn, LoginIn, PasswordUpdate, RegisterIn, Use
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
+@router.get("/registration-role")
+async def get_registration_role(email: str, db: AsyncSession = Depends(get_db)) -> dict[str, str | None]:
+    return {"role": await registration_role(email.strip().casefold(), db)}
+
+
 @router.post("/register", response_model=UserOut, status_code=201)
 async def register(
     data: RegisterIn, request: Request, response: Response, db: AsyncSession = Depends(get_db),
@@ -34,6 +39,8 @@ async def register(
     role = await registration_role(email, db)
     if role is None:
         raise HTTPException(status_code=403, detail="Este correo no está autorizado para registrarse")
+    if role == "student" and not data.student_data_consent:
+        raise HTTPException(status_code=422, detail="Debes aceptar el consentimiento informado para registrarte como estudiante")
     if await db.scalar(select(User.id).where(User.email == email)):
         raise HTTPException(status_code=409, detail="Ya existe una cuenta con este correo")
 
@@ -44,6 +51,8 @@ async def register(
         maternal_last_name=data.maternal_last_name,
         role=role,
         hashed_password=await hash_password(data.password),
+        student_data_consent=role == "student" and data.student_data_consent,
+        student_data_consent_at=datetime.now(UTC) if role == "student" and data.student_data_consent else None,
     )
     db.add(user)
     try:
