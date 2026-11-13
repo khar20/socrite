@@ -58,6 +58,7 @@ export function LoginPage() {
           maternal_last_name: maternalLastName,
           email,
           password,
+          student_data_consent: studentConsent,
         } : { email, password }),
       })
       await continueToApp()
