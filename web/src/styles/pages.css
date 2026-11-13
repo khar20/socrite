@@ -306,10 +306,14 @@
 .tutor-message-role { margin-block-end: 4px; color: hsl(var(--mf)); font-size: 10px; font-weight: 650; }
 .tutor-message-user .tutor-message-role { color: hsl(var(--pf) / .7); }
 .tutor-message p { font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+.tutor-message-pending p { display: flex; align-items: center; gap: 7px; color: hsl(var(--mf)); }
+.tutor-response-error { display: flex; max-width: min(760px, 90%); flex-direction: column; gap: 3px; align-self: flex-start; padding: 10px 12px; border: 1px solid hsl(var(--bad) / .25); border-radius: 10px; color: hsl(var(--bad)); background: hsl(var(--bad) / .06); font-size: 11px; }
+.tutor-response-error span { line-height: 1.5; }
 .tutor-citations { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-block-start: 9px; }
 .tutor-citations > span:first-child { width: 100%; color: hsl(var(--mf)); font-size: 10px; }
 .tutor-composer { display: flex; align-items: flex-end; gap: 8px; padding: 12px; border-block-start: 1px solid hsl(var(--br)); }
 .tutor-composer .text-area { flex: 1; min-height: 46px; max-height: 140px; }
+.tutor-composer-hint { min-height: 25px; padding: 0 12px 8px; color: hsl(var(--mf)); font-size: 10px; }
 @media (max-width: 900px) {
   .readiness-list { grid-template-columns: minmax(0, 1fr); }
   .readiness-item { min-height: 67px; }

@@ -823,6 +823,13 @@ async def send_tutor_message(
     skill_name = ""
     if session.skill_id:
         skill_name = await db.scalar(select(Skill.title).where(Skill.id == session.skill_id)) or ""
+
+    user_message = TutorMessage(session_id=session_id, role="user", content=data.content)
+    db.add(user_message)
+    record_event(db, student.id, "tutor.message.sent", "tutor_session", session_id, session.course_id)
+    await db.commit()
+    await db.refresh(user_message)
+
     try:
         vector_rows = await embed_texts([data.content])
     except AIProviderError as exc:
@@ -844,12 +851,10 @@ async def send_tutor_message(
     ).order_by(TutorMessage.created_at.desc()).limit(10))).scalars().all()
     conversation = [{"role": message.role, "content": message.content}
                     for message in reversed(history)]
-    conversation.append({"role": "user", "content": data.content})
     try:
         reply = await generate_tutor_reply(conversation, skill_name, sources)
     except AIProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    user_message = TutorMessage(session_id=session_id, role="user", content=data.content)
     citations = [{key: source[key] for key in (
         "material_id", "material_name", "page_number", "chunk_index",
     )} for source in sources]
@@ -857,10 +862,17 @@ async def send_tutor_message(
         session_id=session_id, role="assistant", content=reply, citations=citations,
         model=settings.ai_chat_model,
     )
-    db.add_all([user_message, assistant_message])
-    record_event(db, student.id, "tutor.message.sent", "tutor_session", session_id, session.course_id)
+    db.add(assistant_message)
     await db.commit()
     await db.refresh(assistant_message)
-    return {"id": assistant_message.id, "role": assistant_message.role,
+    return {
+        "user_message": {
+            "id": user_message.id, "role": user_message.role, "content": user_message.content,
+            "citations": user_message.citations, "created_at": user_message.created_at,
+        },
+        "assistant_message": {
+            "id": assistant_message.id, "role": assistant_message.role,
             "content": assistant_message.content, "citations": assistant_message.citations,
-            "created_at": assistant_message.created_at}
+            "created_at": assistant_message.created_at,
+        },
+    }

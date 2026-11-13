@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRight, BookOpen, Check, ClipboardCheck, FileText, Layers3, MessageCircle, Repeat2, Send, Target, Users } from 'lucide-react'
+import { ArrowRight, BookOpen, Check, ClipboardCheck, FileText, Layers3, LoaderCircle, MessageCircle, Repeat2, Send, Target, Users } from 'lucide-react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, jsonBody } from '../api'
 import type { Course, CurriculumUnit, PageResult } from '../types'
@@ -46,6 +46,8 @@ type TutorMessageInfo = {
   citations: { material_id: string; material_name: string; page_number: number | null; chunk_index: number }[]
   created_at: string
 }
+type TutorMessageResponse = { user_message: TutorMessageInfo; assistant_message: TutorMessageInfo }
+type TutorMessageSubmission = { sessionId: string; content: string; optimisticId: string }
 
 export function StudentDashboardPage() {
   const [offset, setOffset] = useState(0)
@@ -270,6 +272,11 @@ export function StudentTutorPage() {
   const [sessionId, setSessionId] = useState('')
   const [skillId, setSkillId] = useState('')
   const [message, setMessage] = useState('')
+  const [sendCooldown, setSendCooldown] = useState(false)
+  const [responseError, setResponseError] = useState<{ sessionId: string; message: string } | null>(null)
+  const lastSentAt = useRef(0)
+  const cooldownTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const messageEndRef = useRef<HTMLDivElement>(null)
   const curriculum = useQuery({ queryKey: ['student-curriculum', courseId], queryFn: () => api<CurriculumUnit[]>(`/student/courses/${courseId}/curriculum`) })
   const requestedSkillId = searchParams.get('skill_id')
   useEffect(() => {
@@ -286,6 +293,9 @@ export function StudentTutorPage() {
     queryFn: () => api<{ id: string; messages: TutorMessageInfo[] }>(`/student/tutor/sessions/${sessionId}`),
     enabled: !!sessionId,
   })
+  useEffect(() => () => {
+    if (cooldownTimer.current) clearTimeout(cooldownTimer.current)
+  }, [])
   const createSession = useMutation({
     mutationFn: () => api<TutorSessionInfo>(`/student/courses/${courseId}/tutor/sessions${skillId ? `?skill_id=${skillId}` : ''}`, { method: 'POST' }),
     onSuccess: async (session) => {
@@ -295,27 +305,88 @@ export function StudentTutorPage() {
     onError: (error) => toast(error.message, 'error'),
   })
   const sendMessage = useMutation({
-    mutationFn: () => api<TutorMessageInfo>(`/student/tutor/sessions/${sessionId}/messages`, {
-      method: 'POST', body: jsonBody({ content: message.trim() }),
+    mutationFn: ({ sessionId: targetSessionId, content }: TutorMessageSubmission) => api<TutorMessageResponse>(`/student/tutor/sessions/${targetSessionId}/messages`, {
+      method: 'POST', body: jsonBody({ content }),
     }),
-    onSuccess: async () => {
-      setMessage('')
-      await queryClient.invalidateQueries({ queryKey: ['tutor-messages', sessionId] })
+    onSuccess: (result, variables) => {
+      const queryKey = ['tutor-messages', variables.sessionId]
+      queryClient.setQueryData<{ id: string; messages: TutorMessageInfo[] }>(queryKey, (current) => {
+        const existing = (current?.messages || []).filter((item) => item.id !== variables.optimisticId)
+        const byId = new Map(existing.map((item) => [item.id, item]))
+        byId.set(result.user_message.id, result.user_message)
+        byId.set(result.assistant_message.id, result.assistant_message)
+        const updated = [...byId.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
+        return { id: variables.sessionId, messages: updated }
+      })
+      setResponseError((current) => current?.sessionId === variables.sessionId ? null : current)
+      void queryClient.invalidateQueries({ queryKey })
     },
-    onError: (error) => toast(error.message, 'error'),
+    onError: (error, variables) => setResponseError({ sessionId: variables.sessionId, message: error.message }),
   })
+  useEffect(() => {
+    messageEndRef.current?.scrollIntoView({ block: 'end' })
+  }, [sessionId, messages.data, sendMessage.isPending, responseError])
   if (curriculum.isLoading || sessions.isLoading || (sessionId && messages.isLoading)) return <LoadingState />
   if (curriculum.isError || sessions.isError || messages.isError) return <ErrorState message="No pudimos cargar la sesión del tutor." retry={() => { void sessions.refetch(); if (sessionId) void messages.refetch() }} />
   const aiReady = sessions.data!.ai_configured
   const skills = curriculum.data!.flatMap((unit) => unit.skills.map((skill) => ({ ...skill, unitTitle: unit.title })))
   const currentMessages = messages.data?.messages || []
+  const waitingForTutor = sendMessage.isPending && sendMessage.variables?.sessionId === sessionId
+  const currentResponseError = responseError?.sessionId === sessionId ? responseError.message : ''
+
+  function submitMessage() {
+    const content = message.trim()
+    const now = Date.now()
+    if (!content || !aiReady || sendMessage.isPending || now - lastSentAt.current < 2000) return
+    lastSentAt.current = now
+    setSendCooldown(true)
+    if (cooldownTimer.current) clearTimeout(cooldownTimer.current)
+    cooldownTimer.current = setTimeout(() => {
+      setSendCooldown(false)
+      cooldownTimer.current = null
+    }, 2000)
+
+    const optimisticId = `optimistic-${crypto.randomUUID()}`
+    const optimisticMessage: TutorMessageInfo = {
+      id: optimisticId,
+      role: 'user',
+      content,
+      citations: [],
+      created_at: new Date(now).toISOString(),
+    }
+    queryClient.setQueryData<{ id: string; messages: TutorMessageInfo[] }>(
+      ['tutor-messages', sessionId],
+      (current) => ({ id: sessionId, messages: [...(current?.messages || []), optimisticMessage] }),
+    )
+    setMessage('')
+    setResponseError(null)
+    sendMessage.mutate({ sessionId, content, optimisticId })
+  }
   return <>
     <PageHeader title="Tutor socrático" description="Recibe preguntas y pistas guiadas. El tutor te ayuda a razonar, no decide por sí solo si dominas una habilidad." actions={sessionId ? <Button variant="outline" onClick={() => createSession.mutate()} disabled={!aiReady || createSession.isPending}>Nueva conversación</Button> : undefined} />
     {!aiReady && <div className="inline-alert alert-warning"><MessageCircle size={17} /><span>El tutor está desactivado hasta que se configure el proveedor OpenAI-compatible en el servidor.</span></div>}
     {!sessionId ? <Card><div className="card-content tutor-start"><div className="tutor-start-icon"><MessageCircle size={22} /></div><h2>Comienza con una habilidad</h2><p>Elige un tema del curso o inicia una conversación general. Las respuestas se apoyan en los materiales procesados cuando hay fuentes disponibles.</p><div className="tutor-start-controls"><Field label="Habilidad"><Select value={skillId} onChange={(event) => setSkillId(event.target.value)}><option value="">Sin habilidad específica</option>{skills.map((skill) => <option value={skill.id} key={skill.id}>{skill.unitTitle} · {skill.title}</option>)}</Select></Field><Button onClick={() => createSession.mutate()} disabled={!aiReady || createSession.isPending}>Iniciar conversación</Button></div></div></Card> : <Card className="tutor-chat-card">
       <div className="tutor-session-toolbar"><div><Badge tone={aiReady ? 'success' : 'warning'}>{aiReady ? 'Tutor listo' : 'Proveedor pendiente'}</Badge><span>{skills.find((skill) => skill.id === sessions.data!.sessions.find((session) => session.id === sessionId)?.skill_id)?.title || 'Conversación general'}</span></div><Select aria-label="Cambiar conversación" value={sessionId} onChange={(event) => setSessionId(event.target.value)}>{sessions.data!.sessions.map((session) => <option value={session.id} key={session.id}>{new Date(session.started_at).toLocaleString('es')}</option>)}</Select></div>
-      <div className="tutor-message-list" aria-live="polite">{currentMessages.length ? currentMessages.map((item) => <article className={`tutor-message tutor-message-${item.role}`} key={item.id}><div className="tutor-message-role">{item.role === 'user' ? 'Tú' : 'Tutor'}</div><p>{item.content}</p>{!!item.citations.length && <div className="tutor-citations"><span>Fuentes del curso</span>{item.citations.map((citation) => <span className="filter-chip" key={`${citation.material_id}:${citation.chunk_index}`}>{citation.material_name}{citation.page_number ? ` · pág. ${citation.page_number}` : ''}</span>)}</div>}</article>) : <EmptyState icon={MessageCircle} title="La conversación está lista" description="Escribe qué estás intentando comprender. El tutor empezará con una pregunta, no con la respuesta final." />}</div>
-      <form className="tutor-composer" onSubmit={(event) => { event.preventDefault(); if (message.trim()) sendMessage.mutate() }}><TextArea rows={2} value={message} onChange={(event) => setMessage(event.target.value)} maxLength={5000} placeholder="Escribe tu razonamiento o una duda…" aria-label="Mensaje para el tutor" /><Button type="submit" disabled={!aiReady || !message.trim() || sendMessage.isPending} aria-label="Enviar mensaje">{sendMessage.isPending ? 'Pensando…' : <><Send size={16} />Enviar</>}</Button></form>
+      <div className="tutor-message-list" aria-live="polite">
+        {currentMessages.length ? currentMessages.map((item) => <article className={`tutor-message tutor-message-${item.role}`} key={item.id}>
+          <div className="tutor-message-role">{item.role === 'user' ? 'Tú' : 'Tutor'}</div>
+          <p>{item.content}</p>
+          {!!item.citations.length && <div className="tutor-citations"><span>Fuentes del curso</span>{item.citations.map((citation) => <span className="filter-chip" key={`${citation.material_id}:${citation.chunk_index}`}>{citation.material_name}{citation.page_number ? ` · pág. ${citation.page_number}` : ''}</span>)}</div>}
+        </article>) : <EmptyState icon={MessageCircle} title="La conversación está lista" description="Escribe qué estás intentando comprender. El tutor empezará con una pregunta, no con la respuesta final." />}
+        {waitingForTutor && <article className="tutor-message tutor-message-assistant tutor-message-pending" role="status"><div className="tutor-message-role">Tutor</div><p><LoaderCircle className="spin" size={14} />Preparando una respuesta…</p></article>}
+        {currentResponseError && <div className="tutor-response-error" role="alert"><strong>No se pudo obtener una respuesta</strong><span>{currentResponseError}</span></div>}
+        <div ref={messageEndRef} />
+      </div>
+      <form className="tutor-composer" onSubmit={(event) => { event.preventDefault(); submitMessage() }}>
+        <TextArea rows={2} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+            event.preventDefault()
+            submitMessage()
+          }
+        }} maxLength={5000} placeholder="Escribe tu razonamiento o una duda…" aria-label="Mensaje para el tutor" />
+        <Button type="submit" disabled={!aiReady || !message.trim() || sendMessage.isPending || sendCooldown} aria-label="Enviar mensaje">{sendMessage.isPending ? <><LoaderCircle className="spin" size={15} />Pensando…</> : <><Send size={16} />Enviar</>}</Button>
+      </form>
+      <p className="tutor-composer-hint" aria-live="polite">{sendMessage.isPending ? 'Tu mensaje ya está en la conversación; el tutor está preparando una respuesta.' : sendCooldown ? 'Espera un momento antes de enviar otro mensaje.' : 'Enter envía · Shift + Enter agrega una línea nueva'}</p>
     </Card>}
   </>
 }
