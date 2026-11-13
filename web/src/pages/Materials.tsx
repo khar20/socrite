@@ -15,6 +15,7 @@ type UploadItem = {
   contentType: string
   folderId: string
   unitId: string
+  indexOnUpload: boolean
   progress: number
   status: UploadStatus
   materialId?: string
@@ -54,6 +55,31 @@ function formatSize(size: number) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
+function useRowMenu() {
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const closeFromOutside = (event: Event) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) setOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', closeFromOutside)
+    document.addEventListener('focusin', closeFromOutside)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeFromOutside)
+      document.removeEventListener('focusin', closeFromOutside)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [open])
+
+  return { open, setOpen, menuRef }
+}
+
 function uploadStatusLabel(item: UploadItem) {
   if (item.status === 'uploading') return `${item.progress}%`
   return { pending: 'Pendiente', verifying: 'Verificando', uploaded: 'Subido', failed: 'Error', uploading: '' }[item.status]
@@ -63,7 +89,7 @@ function uploadStatusDetail(item: UploadItem) {
   switch (item.status) {
     case 'uploading': return 'Subiendo archivo…'
     case 'verifying': return 'Comprobando el archivo en el almacenamiento…'
-    case 'uploaded': return 'El procesamiento continúa en segundo plano.'
+    case 'uploaded': return item.indexOnUpload ? 'La indexación continúa en segundo plano.' : 'El contenido no se indexó.'
     default: return ''
   }
 }
@@ -145,6 +171,7 @@ export function MaterialsPage() {
       accepted.push({
         id: crypto.randomUUID(), file, name: file.name, size: file.size, contentType,
         folderId: folderId === 'all' ? '' : folderId, unitId: unitId === 'all' ? '' : unitId,
+        indexOnUpload: true,
         progress: 0, status: 'pending',
       })
     }
@@ -169,6 +196,7 @@ export function MaterialsPage() {
         body: jsonBody({
           name: item.name, content_type: item.contentType, size_bytes: item.size,
           folder_id: item.folderId || null, unit_id: item.unitId || null,
+          index_on_upload: item.indexOnUpload,
         }),
       })
       materialId = ticket.material_id
@@ -345,7 +373,7 @@ export function MaterialsPage() {
       </section>
     </div>
 
-    <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title="Subir materiales" description="Los archivos se guardan en el almacenamiento privado de Neon y se procesan para su consulta." wide
+    <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title="Subir materiales" description="Los archivos se guardan en el almacenamiento privado de Neon. Decide si quieres indexar cada archivo." wide
       onSubmit={(event) => { event.preventDefault(); void startUpload() }}
       submitLabel={uploading ? 'Subiendo…' : 'Subir archivos'} busy={uploading} submitDisabled={!canUpload}>
       <input ref={inputRef} className="visually-hidden" type="file" multiple accept=".pdf,.docx,.pptx,.txt" onChange={(event) => { if (event.target.files) addFiles(event.target.files); event.target.value = '' }} />
@@ -369,6 +397,7 @@ export function MaterialsPage() {
                 <label className="upload-destination"><span>Carpeta</span><Select aria-label={`Carpeta de ${item.name}`} value={item.folderId} onChange={(event) => updateUploadItem(item.id, { folderId: event.target.value })} disabled={uploading}><option value="">General</option>{folders.map((folder) => <option value={folder.id} key={folder.id}>{folder.name}</option>)}</Select></label>
                 <label className="upload-destination"><span>Unidad</span><Select aria-label={`Unidad de ${item.name}`} value={item.unitId} onChange={(event) => updateUploadItem(item.id, { unitId: event.target.value })} disabled={uploading}><option value="">Sin unidad</option>{units.map((unit) => <option value={unit.id} key={unit.id}>{unit.title}</option>)}</Select></label>
               </div>
+              <label className="upload-index-option"><input type="checkbox" checked={item.indexOnUpload} onChange={(event) => updateUploadItem(item.id, { indexOnUpload: event.target.checked })} disabled={uploading} /><span>Indexar para búsqueda y tutor</span></label>
             </> : <>
               <small className={item.error ? 'field-error' : 'upload-detail'}>{item.error || (item.status === 'uploaded' ? `Guardado en ${uploadDestination(item)}. ${uploadStatusDetail(item)}` : uploadStatusDetail(item))}</small>
               {item.status === 'uploading' && <div className="progress-track"><i style={{ width: `${item.progress}%` }} /></div>}
@@ -406,10 +435,10 @@ export function MaterialsPage() {
 function FolderRow({ folder, selected, onSelect, onEdit, onDelete }: {
   folder: MaterialFolder; selected: boolean; onSelect: () => void; onEdit: () => void; onDelete: () => void
 }) {
-  const [menuOpen, setMenuOpen] = useState(false)
+  const { open: menuOpen, setOpen: setMenuOpen, menuRef } = useRowMenu()
   return <div className={`folder-row${selected ? ' is-active' : ''}`}>
     <button className={`folder-button${selected ? ' is-active' : ''}`} onClick={onSelect}><Folder size={16} /><span className="folder-name">{folder.name}</span><span>{folder.count}</span></button>
-    <div className="row-menu-wrap"><Button variant="ghost" size="small" aria-label={`Acciones de ${folder.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></Button>{menuOpen && <div className="row-menu"><button onClick={() => { setMenuOpen(false); onEdit() }}><Pencil size={14} />Renombrar</button><button className="danger-text" onClick={() => { setMenuOpen(false); onDelete() }}><Trash2 size={14} />Eliminar carpeta</button></div>}</div>
+    <div className="row-menu-wrap" ref={menuRef}><Button variant="ghost" size="small" aria-label={`Acciones de ${folder.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={16} /></Button>{menuOpen && <div className="row-menu"><button onClick={() => { setMenuOpen(false); onEdit() }}><Pencil size={14} />Renombrar</button><button className="danger-text" onClick={() => { setMenuOpen(false); onDelete() }}><Trash2 size={14} />Eliminar carpeta</button></div>}</div>
   </div>
 }
 
@@ -417,13 +446,26 @@ function MaterialRow({ material, unitTitle, onOpen, onEdit, onDelete, onRetry, o
   material: Material; unitTitle?: string; onOpen: () => void; onEdit: () => void; onDelete: () => void
   onRetry: () => void; onGenerate: () => void; onDownload: () => void; aiReady: boolean
 }) {
-  const [menuOpen, setMenuOpen] = useState(false)
+  const { open: menuOpen, setOpen: setMenuOpen, menuRef } = useRowMenu()
   const status = material.status === 'ready' ? { tone: 'success' as const, label: 'Listo' }
     : material.status === 'failed' ? { tone: 'danger' as const, label: 'Error' }
       : { tone: 'warning' as const, label: material.status === 'deleting' ? 'Eliminación pendiente' : material.status === 'queued' ? 'Subido' : material.status === 'processing' ? 'Procesando' : 'Subiendo' }
   return <div className="materials-list-row">
     <button className="material-open" onClick={onOpen} disabled={material.status !== 'ready'}><span className="file-type-mark">{material.kind === 'link' ? 'URL' : material.name.split('.').pop()?.toUpperCase()}</span><span className="material-copy"><strong title={material.name}>{material.name}</strong><small>{material.kind === 'link' ? `Enlace externo${unitTitle ? ` · ${unitTitle}` : ''}` : `${formatSize(material.size_bytes)} · ${unitTitle ? `${unitTitle} · ` : ''}${material.chunk_count} fragmentos`}</small></span></button>
-    <div className="material-status"><Badge tone={status.tone}>{status.label}</Badge>{material.status === 'failed' && <Button variant="outline" size="small" onClick={onRetry}><RotateCw size={14} />Reintentar</Button>}{material.status === 'ready' && material.kind === 'file' && aiReady && <><Button variant="outline" size="small" onClick={onRetry}><RotateCw size={14} />Reindexar</Button><Button variant="outline" size="small" onClick={onGenerate}><Sparkles size={14} />Crear pregunta</Button></>}<div className="row-menu-wrap"><Button variant="ghost" size="small" aria-label={`Acciones de ${material.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={17} /></Button>{menuOpen && <div className="row-menu">{material.kind === 'file' && material.status === 'ready' && <button onClick={() => { setMenuOpen(false); onDownload() }}><ArrowDownToLine size={14} />Descargar original</button>}{material.status !== 'deleting' && <button onClick={() => { setMenuOpen(false); onEdit() }}><FileText size={14} />Editar detalles</button>}<button className="danger-text" onClick={() => { setMenuOpen(false); onDelete() }}><Trash2 size={14} />{material.status === 'deleting' ? 'Reintentar eliminación' : 'Eliminar material'}</button></div>}</div></div>
+    <div className="material-status">
+      <Badge tone={status.tone}>{status.label}</Badge>
+      {material.status === 'failed' && <Button variant="outline" size="small" onClick={onRetry}><RotateCw size={14} />Reintentar</Button>}
+      {material.status === 'ready' && material.kind === 'file' && aiReady && <Button variant="outline" size="small" onClick={onGenerate}><Sparkles size={14} />Crear pregunta</Button>}
+      <div className="row-menu-wrap" ref={menuRef}>
+        <Button variant="ghost" size="small" aria-label={`Acciones de ${material.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={17} /></Button>
+        {menuOpen && <div className="row-menu">
+          {material.kind === 'file' && material.status === 'ready' && <button onClick={() => { setMenuOpen(false); onDownload() }}><ArrowDownToLine size={14} />Descargar original</button>}
+          {material.kind === 'file' && material.status === 'ready' && aiReady && <button onClick={() => { setMenuOpen(false); onRetry() }}><RotateCw size={14} />Reindexar</button>}
+          {material.status !== 'deleting' && <button onClick={() => { setMenuOpen(false); onEdit() }}><FileText size={14} />Editar detalles</button>}
+          <button className="danger-text" onClick={() => { setMenuOpen(false); onDelete() }}><Trash2 size={14} />{material.status === 'deleting' ? 'Reintentar eliminación' : 'Eliminar material'}</button>
+        </div>}
+      </div>
+    </div>
     {material.error && <p className="material-error">{material.error}</p>}
   </div>
 }

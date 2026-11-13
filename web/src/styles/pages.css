@@ -134,6 +134,8 @@
 .upload-destination { display: flex; min-width: 128px; flex: 1 1 128px; flex-direction: column; gap: 3px; }
 .upload-destination > span { color: hsl(var(--mf)); font-size: 9.5px; font-weight: 610; letter-spacing: .02em; }
 .upload-destination .select-input { min-height: 31px; padding-block: 4px; font-size: 10.5px; }
+.upload-index-option { display: flex; align-items: center; gap: 7px; color: hsl(var(--mf)); font-size: 10px; cursor: pointer; }
+.upload-index-option input { width: 14px; height: 14px; margin: 0; accent-color: hsl(var(--in)); }
 .progress-track { width: 100%; height: 5px; overflow: hidden; border-radius: 99px; background: hsl(var(--mu)); }
 .progress-track i { display: block; height: 100%; border-radius: inherit; background: hsl(var(--in)); transition: width .15s; }
 .preview-intro { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-block-end: 12px; color: hsl(var(--mf)); font-size: 12px; }

@@ -184,7 +184,8 @@ async def begin_upload(
     await validate_unit(data.unit_id, course_id, db)
     material = Material(course_id=course_id, folder_id=data.folder_id, unit_id=data.unit_id,
                         uploader_id=teacher.id, name=Path(data.name).name,
-                        content_type=data.content_type, size_bytes=data.size_bytes)
+                        content_type=data.content_type, size_bytes=data.size_bytes,
+                        index_on_upload=data.index_on_upload)
     db.add(material)
     await db.flush()
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", material.name).strip("._") or "material"
@@ -225,9 +226,15 @@ async def complete_upload(
     if object_info.get("ContentType") and object_info["ContentType"] != material.content_type:
         raise HTTPException(status_code=409, detail="Uploaded file type does not match the declared type")
     if material.status == "uploading":
-        material.status = "queued"
-        db.add(ProcessingJob(material_id=material.id))
-        record_event(db, teacher.id, "material.upload.completed", "material", material.id, material.course_id)
+        if material.index_on_upload:
+            material.status = "queued"
+            db.add(ProcessingJob(material_id=material.id))
+        else:
+            material.status = "ready"
+        record_event(
+            db, teacher.id, "material.upload.completed", "material", material.id,
+            material.course_id, {"index_on_upload": material.index_on_upload},
+        )
         await db.commit()
         await db.refresh(material)
     return UploadCompleteOut.model_validate({
@@ -319,6 +326,7 @@ async def retry_material(
         raise HTTPException(status_code=409, detail="Material cannot be retried in its current state")
     material.status = "queued"
     material.error = None
+    material.index_on_upload = True
     db.add(ProcessingJob(material_id=material.id))
     await db.commit()
     await db.refresh(material)

@@ -172,6 +172,7 @@ class Material(Base):
     url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     content_type: Mapped[str] = mapped_column(String(180), default="application/octet-stream")
     size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    index_on_upload: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     status: Mapped[str] = mapped_column(String(20), default="uploading")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)

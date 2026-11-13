@@ -189,6 +189,7 @@ class UploadRequest(BaseModel):
     size_bytes: int = Field(gt=0)
     folder_id: str | None = None
     unit_id: str | None = None
+    index_on_upload: bool = True
 
 
 class LinkCreate(BaseModel):
