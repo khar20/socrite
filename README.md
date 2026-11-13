@@ -19,23 +19,24 @@ Socrite is built as a Vite + React frontend with a FastAPI backend, using Postgr
 
 ## Deployment
 
-### Backend on Render
+### Backend on Railway
 
-Use `render.yaml` or create two Docker services from `api/Dockerfile`:
+Create two services from `api/Dockerfile`:
 
 - Root directory / Docker context: `api`
-- Web service: health check `/health/ready`; pre-deploy command `alembic upgrade head`.
-- Worker service: start command `python worker.py`.
-- Set all `sync: false` variables in the Render dashboard, including `DATABASE_URL`, storage credentials, `AI_API_KEY`, `ADMIN_EMAILS`, and `TEACHER_EMAILS`.
-- Set `CORS_ORIGINS` to `https://socrite.kharont.dev`; `render.yaml` sets this explicitly.
-- `APP_ENV=production` enables secure cookies and strict environment validation.
+- Web service: builder `Dockerfile`, health check `/health/ready`, pre-deploy command `alembic upgrade head`.
+- Worker service: same root and Dockerfile, start command `python worker.py`, no health check.
+- Set environment variables in the Railway dashboard, including `DATABASE_URL`, storage credentials, `AI_API_KEY`, `ADMIN_EMAILS`, `TEACHER_EMAILS`, and `CORS_ORIGINS`.
+- Set `CORS_ORIGINS=https://socrite.kharont.dev`.
+- Set `APP_ENV=production` to enable secure cookies and strict environment validation.
+- Railway provides `PORT`; `api/Dockerfile` already binds to it.
 
 ### Frontend on Cloudflare Workers
 
 - Root directory: `web`
 - Build command: `pnpm install --frozen-lockfile && pnpm build`
 - Output directory: `dist`
-- Set `VITE_API_URL=/api/v1`. Production builds also default to `/api/v1` when it is unset. The Worker in `web/worker.js` proxies `/api/*` to `https://socrite.onrender.com`, keeping the session cookie same-site.
+- Set `VITE_API_URL=/api/v1`. Production builds also default to `/api/v1` when it is unset. The Worker in `web/worker.js` proxies `/api/*` to `https://socrite-production.up.railway.app`, keeping the session cookie same-site.
 - Custom domain: `socrite.kharont.dev`, configured in `web/wrangler.toml`.
 - Deploy with Wrangler using `web/wrangler.toml`, or through Cloudflare's Git integration.
 - Only `VITE_API_URL` is allowed as a public frontend variable.

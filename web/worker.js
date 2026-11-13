@@ -1,4 +1,4 @@
-const API_ORIGIN = 'https://socrite.onrender.com'
+const API_ORIGIN = 'https://socrite-production.up.railway.app'
 
 export default {
   async fetch(request, env) {
