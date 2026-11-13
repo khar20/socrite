@@ -96,8 +96,6 @@ export function MaterialsPage() {
   const [linkName, setLinkName] = useState('')
   const [linkUrl, setLinkUrl] = useState('')
   const [newFolder, setNewFolder] = useState('')
-  const [uploadFolder, setUploadFolder] = useState('')
-  const [uploadUnit, setUploadUnit] = useState('')
   const [linkUnit, setLinkUnit] = useState('')
   const [editName, setEditName] = useState('')
   const [editFolder, setEditFolder] = useState('')
@@ -126,8 +124,6 @@ export function MaterialsPage() {
   const materials = query.data?.items || []
 
   function openUpload() {
-    setUploadFolder(folderId === 'all' ? '' : folderId)
-    setUploadUnit('')
     setUploadOpen(true)
   }
 
@@ -150,7 +146,7 @@ export function MaterialsPage() {
       }
       accepted.push({
         id: crypto.randomUUID(), file, name: file.name, size: file.size, contentType,
-        folderId: uploadFolder, unitId: uploadUnit, progress: 0, status: 'pending',
+        folderId: folderId === 'all' ? '' : folderId, unitId: '', progress: 0, status: 'pending',
       })
     }
     if (accepted.length) setUploadItems((current) => [...current, ...accepted])
@@ -182,7 +178,7 @@ export function MaterialsPage() {
         (progress) => updateUploadItem(item.id, { progress }))
       updateUploadItem(item.id, { status: 'verifying', progress: 100 })
       const result = await api<UploadResult>(`/materials/${ticket.material_id}/complete`, { method: 'POST' })
-      if (!result.storage_confirmed) throw new Error('El almacenamiento no confirmó el archivo. Vuelve a intentarlo.')
+      if (result.storage_confirmed === false) throw new Error('El almacenamiento no confirmó el archivo. Vuelve a intentarlo.')
       if ((result.unit_id || null) !== (item.unitId || null)) {
         throw new Error('El archivo se guardó con una unidad distinta a la seleccionada.')
       }
@@ -289,7 +285,7 @@ export function MaterialsPage() {
       await queryClient.invalidateQueries({ queryKey: ['materials', courseId] })
       await queryClient.invalidateQueries({ queryKey: ['folders', courseId] })
       await queryClient.invalidateQueries({ queryKey: ['course', courseId] })
-      toast(result?.status === 'deleting' ? 'Eliminación programada; el material desaparecerá cuando se confirme en el almacenamiento.' : 'Material eliminado.')
+      toast(result?.status === 'deleting' ? 'Eliminación en curso; se reintentará automáticamente.' : 'Material eliminado.')
     } catch (error) { toast(error instanceof Error ? error.message : 'No se pudo eliminar.', 'error') }
   }
 
@@ -372,15 +368,10 @@ export function MaterialsPage() {
     <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title="Subir materiales" description="Los archivos se guardan en el almacenamiento privado de Neon y se procesan para su consulta." wide
       onSubmit={(event) => { event.preventDefault(); void startUpload() }}
       submitLabel={uploading ? 'Subiendo…' : 'Subir archivos'} busy={uploading} submitDisabled={!canUpload}>
-      <div className="upload-controls">
-        <Field label="Carpeta predeterminada" hint="Se aplica a los archivos nuevos."><Select value={uploadFolder} onChange={(event) => setUploadFolder(event.target.value)} disabled={uploading}><option value="">General</option>{folders.map((folder) => <option value={folder.id} key={folder.id}>{folder.name}</option>)}</Select></Field>
-        <Field label="Unidad predeterminada" hint="Puedes cambiarla en cada archivo."><Select value={uploadUnit} onChange={(event) => setUploadUnit(event.target.value)} disabled={uploading}><option value="">Sin unidad</option>{units.map((unit) => <option value={unit.id} key={unit.id}>{unit.title}</option>)}</Select></Field>
-        <Button type="button" variant="outline" onClick={() => inputRef.current?.click()} disabled={uploading}><UploadCloud size={16} />Elegir archivos</Button>
-      </div>
       <input ref={inputRef} className="visually-hidden" type="file" multiple accept=".pdf,.docx,.pptx,.txt" onChange={(event) => { if (event.target.files) addFiles(event.target.files); event.target.value = '' }} />
       <button type="button" className="dropzone" disabled={uploading} onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files) }}>
         <span className="dropzone-icon"><UploadCloud size={22} /></span>
-        <strong>Arrastra archivos aquí o selecciónalos</strong>
+        <strong>Haz clic o arrastra archivos aquí</strong>
         <small>PDF, DOCX, PPTX o TXT · hasta {configuration.data!.max_upload_mb} MB por archivo</small>
       </button>
       {!!uploadItems.length && <div className="upload-queue">

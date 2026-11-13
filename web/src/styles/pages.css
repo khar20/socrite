@@ -115,8 +115,6 @@
 .row-menu button:hover { background: hsl(var(--mu)); }
 .danger-text { color: hsl(var(--bad)); }
 .materials-help { margin-block-start: 10px; color: hsl(var(--mf)); font-size: 10.5px; }
-.upload-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 11px; }
-.upload-controls .form-field { margin-block-end: 15px; }
 .dropzone { display: flex; width: 100%; min-height: 145px; flex-direction: column; align-items: center; justify-content: center; gap: 5px; margin-block-start: 3px; padding: 20px; border: 1px dashed hsl(var(--mf) / .55); border-radius: calc(var(--r) + 2px); color: hsl(var(--fg)); background: hsl(var(--mu) / .35); }
 .dropzone:hover { border-color: hsl(var(--fg) / .65); background: hsl(var(--mu) / .65); }
 .dropzone:disabled { cursor: wait; opacity: .65; }
@@ -321,8 +319,6 @@
   .materials-list-row { grid-template-columns: minmax(0, 1fr); gap: 7px; }
   .material-status { justify-content: flex-start; padding-inline-start: 47px; }
   .material-error { margin-inline-start: 0; }
-  .upload-controls { grid-template-columns: minmax(0, 1fr); gap: 0; }
-  .upload-controls > .button { justify-self: start; margin-block-end: 15px; }
   .upload-row { flex-wrap: wrap; }
   .upload-row-info { flex-basis: calc(100% - 46px); }
   .upload-row-status { margin-inline-start: 46px; }

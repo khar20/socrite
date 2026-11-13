@@ -1,9 +1,13 @@
+import asyncio
+import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import delete, func, select, update
+from fastapi.responses import JSONResponse
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_teacher
@@ -23,6 +27,7 @@ from app.schemas import (
 from app.services.audit import record_event
 from app.storage import storage_client
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["materials"])
 ALLOWED_TYPES = {
     ".pdf": {"application/pdf"},
@@ -57,6 +62,21 @@ async def validate_unit(unit_id: str | None, course_id: str, db: AsyncSession) -
         unit = await db.get(Unit, unit_id)
         if unit is None or unit.course_id != course_id:
             raise HTTPException(status_code=422, detail="Unit does not belong to this course")
+
+
+async def verify_stored_object(client, object_key: str) -> dict:
+    for attempt in range(4):
+        try:
+            return await asyncio.to_thread(
+                client.head_object, Bucket=settings.neon_storage_bucket, Key=object_key
+            )
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"} and attempt < 3:
+                await asyncio.sleep(0.25 * 2 ** attempt)
+                continue
+            raise
+    raise RuntimeError("Object verification failed")
 
 
 @router.get("/courses/{course_id}/folders")
@@ -194,7 +214,7 @@ async def complete_upload(
     if client is None:
         raise HTTPException(status_code=503, detail="Neon Object Storage is not configured")
     try:
-        object_info = client.head_object(Bucket=settings.neon_storage_bucket, Key=material.object_key)
+        object_info = await verify_stored_object(client, material.object_key)
     except Exception as exc:
         raise HTTPException(status_code=409, detail="Uploaded file was not found in storage") from exc
     if object_info.get("ContentLength") != material.size_bytes:
@@ -302,7 +322,7 @@ async def retry_material(
     return material
 
 
-@router.delete("/materials/{material_id}", status_code=202, response_model=None)
+@router.delete("/materials/{material_id}", response_model=None)
 async def delete_material(
     material_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict | Response:
@@ -310,24 +330,23 @@ async def delete_material(
     if material.status == "processing":
         raise HTTPException(status_code=409, detail="Wait for material processing to finish before deleting it")
     if material.object_key:
-        if storage_client() is None:
+        client = storage_client()
+        if client is None:
             raise HTTPException(status_code=503, detail="Neon Object Storage is not configured")
-        if material.status == "deleting":
-            material.deletion_retry_at = datetime.now(UTC)
-            material.error = None
+        try:
+            await asyncio.to_thread(
+                client.delete_object, Bucket=settings.neon_storage_bucket, Key=material.object_key
+            )
+        except (BotoCoreError, ClientError, OSError) as exc:
+            logger.warning("Object deletion failed for %s: %s", material.id, exc)
+            material.status = "deleting"
+            material.deletion_attempts += 1
+            material.deletion_retry_at = datetime.now(UTC) + timedelta(seconds=30)
+            material.error = str(exc)[:1000]
+            record_event(db, teacher.id, "material.delete.queued", "material", material.id, material.course_id)
             await db.commit()
-            return {"status": "deleting"}
-        await db.execute(delete(ProcessingJob).where(
-            ProcessingJob.material_id == material.id,
-            ProcessingJob.status != "processing",
-        ))
-        material.status = "deleting"
-        material.error = None
-        material.deletion_retry_at = datetime.now(UTC)
-        record_event(db, teacher.id, "material.delete.queued", "material", material.id, material.course_id)
-        await db.commit()
-        return {"status": "deleting"}
+            return JSONResponse(status_code=202, content={"status": "deleting"})
     record_event(db, teacher.id, "material.deleted", "material", material.id, material.course_id)
     await db.delete(material)
     await db.commit()
-    return Response(status_code=204)
+    return {"status": "deleted"}

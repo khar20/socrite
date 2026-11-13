@@ -3,7 +3,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from botocore.exceptions import BotoCoreError
+from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import delete, or_, select, update
 
 from app.ai import embed_texts
@@ -183,7 +183,7 @@ async def reconcile_materials() -> None:
             if material.status == "uploading":
                 material.status = "deleting"
                 material.error = "Upload expired before completion; removing the abandoned file."
-            material.deletion_retry_at = now + timedelta(minutes=5)
+            material.deletion_retry_at = now + timedelta(seconds=30)
             work.append((material.id, material.course_id, material.uploader_id, material.object_key))
         await db.commit()
 
@@ -196,7 +196,7 @@ async def reconcile_materials() -> None:
                 await asyncio.to_thread(
                     client.delete_object, Bucket=settings.neon_storage_bucket, Key=object_key
                 )
-        except (BotoCoreError, OSError, RuntimeError, ValueError) as exc:
+        except (BotoCoreError, ClientError, OSError, RuntimeError, ValueError) as exc:
             logger.warning("Material cleanup failed for %s: %s", material_id, exc)
             async with SessionLocal() as db:
                 material = await db.scalar(select(Material).where(
@@ -228,15 +228,19 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     last_reconciliation = 0.0
     while True:
-        now = loop.time()
-        if now - last_reconciliation >= 60:
-            await reconcile_materials()
-            last_reconciliation = now
-        claimed = await claim_job()
-        if claimed is None:
-            await asyncio.sleep(2)
-            continue
-        await process_job(*claimed)
+        try:
+            now = loop.time()
+            if now - last_reconciliation >= 60:
+                await reconcile_materials()
+                last_reconciliation = now
+            claimed = await claim_job()
+            if claimed is None:
+                await asyncio.sleep(2)
+                continue
+            await process_job(*claimed)
+        except Exception:
+            logger.exception("Worker iteration failed")
+            await asyncio.sleep(5)
 
 
 if __name__ == "__main__":
