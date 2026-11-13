@@ -193,7 +193,7 @@ async def begin_upload(
     material = Material(course_id=course_id, folder_id=data.folder_id, unit_id=data.unit_id,
                         uploader_id=teacher.id, name=Path(data.name).name,
                         content_type=data.content_type, size_bytes=data.size_bytes,
-                        index_on_upload=data.index_on_upload)
+                        index_on_upload=data.index_on_upload, ocr_on_upload=data.ocr_on_upload)
     db.add(material)
     await db.flush()
     safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", material.name).strip("._") or "material"

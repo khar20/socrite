@@ -6,7 +6,7 @@ from uuid import uuid4
 from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import delete, or_, select, update
 
-from app.ai import embed_texts, extract_image_text
+from app.ai import AIProviderError, embed_texts, extract_image_text
 from app.config import settings
 from app.db import SessionLocal
 from app.models import Material, MaterialChunk, ProcessingJob
@@ -17,19 +17,23 @@ from app.storage import storage_client
 logger = logging.getLogger("socrite.worker")
 
 
-async def extract_material_markdown_pages(filename: str, content: bytes) -> list[tuple[int, str]]:
+async def extract_material_markdown_pages(
+    filename: str, content: bytes, ocr_images: bool = False,
+) -> list[tuple[int, str]]:
     pages = await asyncio.to_thread(extract_pages, filename, content)
-    if not settings.ai_vision_configured and any(page.images and not page.has_native_text for page in pages):
-        raise ValueError("Configure an AI vision model to index this image-based file")
-    if not settings.ai_vision_configured and any(page.images for page in pages):
-        logger.warning("Skipping embedded-image OCR for %s; no vision model is configured", filename)
+    if ocr_images and not settings.ai_vision_configured and any(page.images for page in pages):
+        raise ValueError("Configure an AI vision model to use OCR for this file")
 
     markdown_pages = []
     for page in pages:
         image_text = []
-        if settings.ai_vision_configured:
+        if ocr_images and settings.ai_vision_configured:
             for image in page.images:
-                text = await extract_image_text(image)
+                try:
+                    text = await extract_image_text(image)
+                except AIProviderError as exc:
+                    logger.warning("Skipping OCR image in %s: %s", filename, exc)
+                    continue
                 if text:
                     image_text.append(text)
         if not page.has_native_text and not image_text:
@@ -88,6 +92,7 @@ async def process_job(job_id: str, material_id: str, lease_token: str) -> None:
                 raise ValueError("Material or active processing lease was not found")
             object_key = material.object_key
             filename = material.name
+            ocr_images = material.ocr_on_upload
 
         client = storage_client()
         if client is None:
@@ -96,10 +101,8 @@ async def process_job(job_id: str, material_id: str, lease_token: str) -> None:
             client.get_object, Bucket=settings.neon_storage_bucket, Key=object_key
         )
         content = await asyncio.to_thread(stored["Body"].read)
-        markdown_pages = await extract_material_markdown_pages(filename, content)
+        markdown_pages = await extract_material_markdown_pages(filename, content, ocr_images)
         chunks = await asyncio.to_thread(chunk_pages, markdown_pages)
-        if not chunks:
-            raise ValueError("No readable text was found in this file")
 
         embeddings: list[list[float] | None] = [None] * len(chunks)
         if settings.ai_configured:
@@ -121,13 +124,15 @@ async def process_job(job_id: str, material_id: str, lease_token: str) -> None:
             if job is None or material is None:
                 logger.info("Discarding stale processing result for %s", material_id)
                 return
-            await db.execute(delete(MaterialChunk).where(MaterialChunk.material_id == material_id))
-            for index, ((page, text), embedding) in enumerate(zip(chunks, embeddings, strict=True)):
-                db.add(MaterialChunk(material_id=material_id, chunk_index=index,
-                                     page_number=page, content=text, embedding=embedding))
+            if chunks:
+                await db.execute(delete(MaterialChunk).where(MaterialChunk.material_id == material_id))
+                for index, ((page, text), embedding) in enumerate(zip(chunks, embeddings, strict=True)):
+                    db.add(MaterialChunk(material_id=material_id, chunk_index=index,
+                                         page_number=page, content=text, embedding=embedding))
             material.status = "ready"
             material.error = None
-            material.chunk_count = len(chunks)
+            if chunks:
+                material.chunk_count = len(chunks)
             job.status = "completed"
             job.error = None
             job.claimed_at = None

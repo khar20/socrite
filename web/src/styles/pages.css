@@ -140,8 +140,7 @@
 .progress-track i { display: block; height: 100%; border-radius: inherit; background: hsl(var(--in)); transition: width .15s; }
 .preview-intro { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-block-end: 12px; color: hsl(var(--mf)); font-size: 12px; }
 .text-preview { max-height: 55dvh; overflow: auto; padding: 15px; border: 1px solid hsl(var(--br)); border-radius: var(--r); background: hsl(var(--mu) / .25); }
-.text-preview p { margin-block-end: 13px; font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
-.text-preview p:last-child { margin-block-end: 0; }
+.text-preview { margin: 0; font-family: inherit; font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
 .people-list, .question-list, .review-history { display: flex; flex-direction: column; }
 .person-row, .review-history-row { display: flex; align-items: center; gap: 10px; min-height: 59px; padding-block: 8px; border-block-end: 1px solid hsl(var(--br)); }
 .person-row:last-child, .review-history-row:last-child { border-block-end: 0; }

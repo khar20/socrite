@@ -655,6 +655,7 @@ async def all_activity(
 async def configuration(teacher: User = Depends(require_teacher)) -> dict:
     return {"database_configured": settings.database_configured,
             "ai_configured": settings.ai_configured,
+            "ai_vision_configured": settings.ai_vision_configured,
             "ai_provider": settings.ai_provider_name or None,
             "chat_model": settings.ai_chat_model if settings.ai_configured else None,
             "embedding_model": settings.ai_embedding_model if settings.ai_configured else None,

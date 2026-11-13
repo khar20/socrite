@@ -190,6 +190,7 @@ class UploadRequest(BaseModel):
     folder_id: str | None = None
     unit_id: str | None = None
     index_on_upload: bool = True
+    ocr_on_upload: bool = False
 
 
 class LinkCreate(BaseModel):

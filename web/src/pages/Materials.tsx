@@ -16,6 +16,7 @@ type UploadItem = {
   folderId: string
   unitId: string
   indexOnUpload: boolean
+  ocrOnUpload: boolean
   progress: number
   status: UploadStatus
   materialId?: string
@@ -27,6 +28,14 @@ const mimeByExtension: Record<string, string> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   txt: 'text/plain',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  bmp: 'image/bmp',
+  gif: 'image/gif',
 }
 const uploadTone: Record<UploadStatus, 'neutral' | 'success' | 'warning' | 'danger' | 'info'> = {
   pending: 'neutral',
@@ -171,7 +180,7 @@ export function MaterialsPage() {
       accepted.push({
         id: crypto.randomUUID(), file, name: file.name, size: file.size, contentType,
         folderId: folderId === 'all' ? '' : folderId, unitId: unitId === 'all' ? '' : unitId,
-        indexOnUpload: true,
+        indexOnUpload: true, ocrOnUpload: false,
         progress: 0, status: 'pending',
       })
     }
@@ -190,6 +199,7 @@ export function MaterialsPage() {
   async function uploadOne(item: UploadItem) {
     updateUploadItem(item.id, { status: 'uploading', progress: 0, error: undefined })
     let materialId: string | null = null
+    let fileUploaded = false
     try {
       const ticket = await api<UploadTicket>(`/courses/${courseId}/materials/uploads`, {
         method: 'POST',
@@ -197,12 +207,14 @@ export function MaterialsPage() {
           name: item.name, content_type: item.contentType, size_bytes: item.size,
           folder_id: item.folderId || null, unit_id: item.unitId || null,
           index_on_upload: item.indexOnUpload,
+          ocr_on_upload: item.ocrOnUpload,
         }),
       })
       materialId = ticket.material_id
       updateUploadItem(item.id, { materialId })
       await sendFile(ticket.upload_url, ticket.headers, item.file,
         (progress) => updateUploadItem(item.id, { progress }))
+      fileUploaded = true
       updateUploadItem(item.id, { status: 'verifying', progress: 100 })
       const result = await api<UploadResult>(`/materials/${ticket.material_id}/complete`, { method: 'POST' })
       if (!result.storage_confirmed) throw new Error('El almacenamiento no confirmó el archivo. Vuelve a intentarlo.')
@@ -221,8 +233,10 @@ export function MaterialsPage() {
     } catch (error) {
       let message = error instanceof Error ? error.message : 'Error de carga'
       if (materialId) {
-        try { await api(`/materials/${materialId}`, { method: 'DELETE' }) }
-        catch { message += ' El registro quedó en la biblioteca; elimínalo antes de volver a subir el archivo.' }
+        if (fileUploaded) {
+          message = `El archivo original se conservó en la biblioteca, aunque no se pudo confirmar: ${message}`
+          await queryClient.invalidateQueries({ queryKey: ['materials', courseId] })
+        }
       }
       updateUploadItem(item.id, { status: 'failed', error: message })
       return false
@@ -314,9 +328,13 @@ export function MaterialsPage() {
         const { url } = await api<{ url: string }>(`/materials/${material.id}/download-url`)
         window.open(url, '_blank', 'noopener,noreferrer')
       } else {
-        const { url } = await api<{ url: string }>(`/materials/${material.id}/download-url?inline=true`)
-        if (material.content_type === 'application/pdf') window.open(url, '_blank', 'noopener,noreferrer')
-        else setPreview(material)
+        if (material.content_type === 'application/pdf' || material.content_type.startsWith('image/')
+            || material.content_type === 'text/plain') {
+          const { url } = await api<{ url: string }>(`/materials/${material.id}/download-url?inline=true`)
+          window.open(url, '_blank', 'noopener,noreferrer')
+        } else {
+          await downloadMaterial(material)
+        }
       }
     } catch (error) { toast(error instanceof Error ? error.message : 'No se pudo abrir el recurso.', 'error') }
   }
@@ -366,21 +384,21 @@ export function MaterialsPage() {
       <section className="materials-main">
          <div className="materials-toolbar"><div><h2>{folderId === 'all' ? 'Todos los materiales' : currentFolder?.name || 'Carpeta'}</h2><p className="muted-text text-small">{query.data?.total || 0} recurso{query.data?.total === 1 ? '' : 's'}{unitId !== 'all' ? ' en esta unidad' : folderId === 'all' ? ' en este curso' : ' en esta carpeta'}</p></div><div className="materials-filters"><Select aria-label="Filtrar por unidad" value={unitId} onChange={(event) => { setUnitId(event.target.value); setOffset(0) }}><option value="all">Todas las unidades</option>{units.map((unit) => <option value={unit.id} key={unit.id}>{unit.title}</option>)}</Select><div className="materials-search"><TextInput type="search" aria-label="Buscar material" placeholder="Buscar materiales…" value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0) }} /></div></div></div>
         <Card><div className="materials-list">
-         {!materials.length ? <EmptyState icon={FileText} title={search ? 'No hay resultados' : query.data!.total ? 'No hay materiales en esta página' : unitId !== 'all' ? 'No hay materiales en esta unidad' : folderId === 'all' ? 'Todavía no hay materiales' : 'Esta carpeta está vacía'} description={search ? 'Prueba con otra búsqueda.' : 'Sube apuntes, guías o presentaciones, o agrega un enlace de referencia.'} action={!search && query.data!.total === 0 && <div className="empty-actions"><Button onClick={openUpload}><UploadCloud size={15} />Subir archivos</Button><Button variant="outline" onClick={() => setLinkOpen(true)}><Link2 size={15} />Añadir enlace</Button></div>} /> : materials.map((material) => <MaterialRow key={material.id} material={material} unitTitle={units.find((unit) => unit.id === material.unit_id)?.title} onOpen={() => void openFile(material)} onEdit={() => { setEditing(material); setEditName(material.name); setEditFolder(material.folder_id || '') }} onDelete={() => void removeMaterial(material)} onRetry={() => void retry(material)} onGenerate={() => void generateQuestion(material)} onDownload={() => void downloadMaterial(material)} aiReady={configuration.data!.ai_configured} />)}
+         {!materials.length ? <EmptyState icon={FileText} title={search ? 'No hay resultados' : query.data!.total ? 'No hay materiales en esta página' : unitId !== 'all' ? 'No hay materiales en esta unidad' : folderId === 'all' ? 'Todavía no hay materiales' : 'Esta carpeta está vacía'} description={search ? 'Prueba con otra búsqueda.' : 'Sube apuntes, guías o presentaciones, o agrega un enlace de referencia.'} action={!search && query.data!.total === 0 && <div className="empty-actions"><Button onClick={openUpload}><UploadCloud size={15} />Subir archivos</Button><Button variant="outline" onClick={() => setLinkOpen(true)}><Link2 size={15} />Añadir enlace</Button></div>} /> : materials.map((material) => <MaterialRow key={material.id} material={material} unitTitle={units.find((unit) => unit.id === material.unit_id)?.title} onOpen={() => void openFile(material)} onPreview={() => setPreview(material)} onEdit={() => { setEditing(material); setEditName(material.name); setEditFolder(material.folder_id || '') }} onDelete={() => void removeMaterial(material)} onRetry={() => void retry(material)} onGenerate={() => void generateQuestion(material)} onDownload={() => void downloadMaterial(material)} aiReady={configuration.data!.ai_configured} />)}
          </div></Card>
          <PaginationControls total={query.data!.total} limit={limit} offset={offset} onChange={setOffset} />
-        <p className="materials-help">PDF, DOCX, PPTX y TXT · máximo {configuration.data!.max_upload_mb} MB por archivo. Los enlaces se abren en una pestaña nueva.</p>
+         <p className="materials-help">PDF, DOCX, PPTX, TXT e imágenes · máximo {configuration.data!.max_upload_mb} MB por archivo. Los enlaces se abren en una pestaña nueva.</p>
       </section>
     </div>
 
     <Modal open={uploadOpen} onClose={() => setUploadOpen(false)} title="Subir materiales" description="Los archivos se guardan en el almacenamiento privado de Neon. Decide si quieres indexar cada archivo." wide
       onSubmit={(event) => { event.preventDefault(); void startUpload() }}
       submitLabel={uploading ? 'Subiendo…' : 'Subir archivos'} busy={uploading} submitDisabled={!canUpload}>
-      <input ref={inputRef} className="visually-hidden" type="file" multiple accept=".pdf,.docx,.pptx,.txt" onChange={(event) => { if (event.target.files) addFiles(event.target.files); event.target.value = '' }} />
+      <input ref={inputRef} className="visually-hidden" type="file" multiple accept=".pdf,.docx,.pptx,.txt,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp,.gif" onChange={(event) => { if (event.target.files) addFiles(event.target.files); event.target.value = '' }} />
       <button type="button" className="dropzone" disabled={uploading} onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files) }}>
         <span className="dropzone-icon"><UploadCloud size={22} /></span>
         <strong>Haz clic o arrastra archivos aquí</strong>
-        <small>PDF, DOCX, PPTX o TXT · hasta {configuration.data!.max_upload_mb} MB por archivo</small>
+        <small>PDF, DOCX, PPTX, TXT o imágenes · hasta {configuration.data!.max_upload_mb} MB por archivo</small>
       </button>
       {!!uploadItems.length && <div className="upload-queue">
         <div className="upload-queue-title">
@@ -398,6 +416,7 @@ export function MaterialsPage() {
                 <label className="upload-destination"><span>Unidad</span><Select aria-label={`Unidad de ${item.name}`} value={item.unitId} onChange={(event) => updateUploadItem(item.id, { unitId: event.target.value })} disabled={uploading}><option value="">Sin unidad</option>{units.map((unit) => <option value={unit.id} key={unit.id}>{unit.title}</option>)}</Select></label>
               </div>
               <label className="upload-index-option"><input type="checkbox" checked={item.indexOnUpload} onChange={(event) => updateUploadItem(item.id, { indexOnUpload: event.target.checked })} disabled={uploading} /><span>Indexar para búsqueda y tutor</span></label>
+              <label className="upload-index-option"><input type="checkbox" checked={item.ocrOnUpload} onChange={(event) => updateUploadItem(item.id, { ocrOnUpload: event.target.checked })} disabled={uploading || !item.indexOnUpload || !configuration.data!.ai_vision_configured} /><span>Usar OCR opcional para texto en imágenes</span></label>
             </> : <>
               <small className={item.error ? 'field-error' : 'upload-detail'}>{item.error || (item.status === 'uploaded' ? `Guardado en ${uploadDestination(item)}. ${uploadStatusDetail(item)}` : uploadStatusDetail(item))}</small>
               {item.status === 'uploading' && <div className="progress-track"><i style={{ width: `${item.progress}%` }} /></div>}
@@ -409,7 +428,7 @@ export function MaterialsPage() {
           </div>
         </div>)}
       </div>}
-      <p className="field-hint">Los archivos se suben solo al pulsar “Subir archivos”. Al cerrar este cuadro, las cargas en curso continúan.</p>
+      <p className="field-hint">El texto seleccionable se estandariza automáticamente en Markdown. Para archivos escaneados o imágenes, activa OCR opcional{configuration.data!.ai_vision_configured ? '' : ' (requiere configurar un modelo de visión)'}. Los archivos se suben solo al pulsar “Subir archivos”.</p>
     </Modal>
 
     <Modal open={linkOpen} onClose={() => setLinkOpen(false)} title="Añadir enlace" description="Guarda un recurso web dentro de la biblioteca." onSubmit={(event) => { event.preventDefault(); createLink.mutate() }} submitLabel="Guardar enlace" busy={createLink.isPending}>
@@ -442,8 +461,8 @@ function FolderRow({ folder, selected, onSelect, onEdit, onDelete }: {
   </div>
 }
 
-function MaterialRow({ material, unitTitle, onOpen, onEdit, onDelete, onRetry, onGenerate, onDownload, aiReady }: {
-  material: Material; unitTitle?: string; onOpen: () => void; onEdit: () => void; onDelete: () => void
+function MaterialRow({ material, unitTitle, onOpen, onPreview, onEdit, onDelete, onRetry, onGenerate, onDownload, aiReady }: {
+  material: Material; unitTitle?: string; onOpen: () => void; onPreview: () => void; onEdit: () => void; onDelete: () => void
   onRetry: () => void; onGenerate: () => void; onDownload: () => void; aiReady: boolean
 }) {
   const { open: menuOpen, setOpen: setMenuOpen, menuRef } = useRowMenu()
@@ -451,7 +470,7 @@ function MaterialRow({ material, unitTitle, onOpen, onEdit, onDelete, onRetry, o
     : material.status === 'failed' ? { tone: 'danger' as const, label: 'Error' }
       : { tone: 'warning' as const, label: material.status === 'deleting' ? 'Eliminación pendiente' : material.status === 'queued' ? 'Subido' : material.status === 'processing' ? 'Procesando' : 'Subiendo' }
   return <div className="materials-list-row">
-    <button className="material-open" onClick={onOpen} disabled={material.status !== 'ready'}><span className="file-type-mark">{material.kind === 'link' ? 'URL' : material.name.split('.').pop()?.toUpperCase()}</span><span className="material-copy"><strong title={material.name}>{material.name}</strong><small>{material.kind === 'link' ? `Enlace externo${unitTitle ? ` · ${unitTitle}` : ''}` : `${formatSize(material.size_bytes)} · ${unitTitle ? `${unitTitle} · ` : ''}${material.chunk_count} fragmentos`}</small></span></button>
+    <button className="material-open" onClick={onOpen} disabled={material.status === 'deleting'}><span className="file-type-mark">{material.kind === 'link' ? 'URL' : material.name.split('.').pop()?.toUpperCase()}</span><span className="material-copy"><strong title={material.name}>{material.name}</strong><small>{material.kind === 'link' ? `Enlace externo${unitTitle ? ` · ${unitTitle}` : ''}` : `${formatSize(material.size_bytes)} · ${unitTitle ? `${unitTitle} · ` : ''}${material.chunk_count} fragmentos`}</small></span></button>
     <div className="material-status">
       <Badge tone={status.tone}>{status.label}</Badge>
       {material.status === 'failed' && <Button variant="outline" size="small" onClick={onRetry}><RotateCw size={14} />Reintentar</Button>}
@@ -459,7 +478,8 @@ function MaterialRow({ material, unitTitle, onOpen, onEdit, onDelete, onRetry, o
       <div className="row-menu-wrap" ref={menuRef}>
         <Button variant="ghost" size="small" aria-label={`Acciones de ${material.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={17} /></Button>
         {menuOpen && <div className="row-menu">
-          {material.kind === 'file' && material.status === 'ready' && <button onClick={() => { setMenuOpen(false); onDownload() }}><ArrowDownToLine size={14} />Descargar original</button>}
+          {material.kind === 'file' && material.status !== 'deleting' && <button onClick={() => { setMenuOpen(false); onDownload() }}><ArrowDownToLine size={14} />Descargar original</button>}
+          {material.kind === 'file' && material.status !== 'deleting' && <button onClick={() => { setMenuOpen(false); onPreview() }}><FileText size={14} />Mostrar texto extraído</button>}
           {material.kind === 'file' && material.status === 'ready' && aiReady && <button onClick={() => { setMenuOpen(false); onRetry() }}><RotateCw size={14} />Reindexar</button>}
           {material.status !== 'deleting' && <button onClick={() => { setMenuOpen(false); onEdit() }}><FileText size={14} />Editar detalles</button>}
           <button className="danger-text" onClick={() => { setMenuOpen(false); onDelete() }}><Trash2 size={14} />{material.status === 'deleting' ? 'Reintentar eliminación' : 'Eliminar material'}</button>
@@ -486,7 +506,7 @@ function MaterialPreview({ material, onClose }: { material: Material | null; onC
     {chunks === null && !loading && !error && <div className="preview-intro"><p>Vista previa del texto extraído. La versión original sigue disponible para descargar.</p><Button onClick={() => void load()}><FileText size={15} />Cargar vista previa</Button></div>}
     {loading && <LoadingState label="Cargando texto extraído…" />}
     {error && <div className="inline-alert alert-error">{error}</div>}
-    {chunks && (chunks.length ? <article className="text-preview">{chunks.map((chunk, index) => <p key={index}>{chunk}</p>)}</article> : <EmptyState icon={FileText} title="No se extrajo texto" description="Comprueba el archivo original o vuelve a procesarlo." />)}
+    {chunks && (chunks.length ? <pre className="text-preview">{chunks.join('\n\n')}</pre> : <EmptyState icon={FileText} title="No se extrajo texto" description="Comprueba el archivo original o vuelve a procesarlo." />)}
   </Modal>
 }
 
