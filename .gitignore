@@ -43,3 +43,6 @@ Thumbs.db
 .vscode/
 *.swp
 .neon
+
+# Cloudflare Wrangler
+.wrangler/
