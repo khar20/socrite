@@ -40,6 +40,7 @@ from app.services.pedagogy import record_skill_evidence, review_interval
 from app.storage import storage_client
 
 router = APIRouter(prefix="/student", tags=["student"])
+AVAILABLE_MATERIAL_STATUSES = ("queued", "processing", "ready", "failed")
 
 
 async def enrolled_course(course_id: str, student: User, db: AsyncSession) -> Course:
@@ -77,9 +78,9 @@ async def list_courses(
             *membership_filter, Course.status == "active",
         )
     ) or 0
-    ready_materials = await db.scalar(
+    available_materials = await db.scalar(
         select(func.count(Material.id)).join(CourseMember, CourseMember.course_id == Material.course_id)
-        .where(*membership_filter, Material.status == "ready")
+        .where(*membership_filter, Material.status.in_(AVAILABLE_MATERIAL_STATUSES))
     ) or 0
     courses = (await db.execute(
         select(Course).join(CourseMember).where(*membership_filter)
@@ -95,7 +96,8 @@ async def list_courses(
     )).all())
     material_counts = dict((await db.execute(
         select(Material.course_id, func.count(Material.id)).where(
-            Material.course_id.in_(course_ids), Material.status == "ready",
+            Material.course_id.in_(course_ids),
+            Material.status.in_(AVAILABLE_MATERIAL_STATUSES),
         ).group_by(Material.course_id)
     )).all())
     result = []
@@ -107,7 +109,7 @@ async def list_courses(
                        "material_count": material_counts.get(course.id, 0)})
     return {"items": result, "total": total, "limit": limit, "offset": offset,
             "summary": {"course_count": total, "active_course_count": active_courses,
-                        "material_count": ready_materials}}
+                         "material_count": available_materials}}
 
 
 @router.post("/invitations/{token}/accept")
@@ -325,7 +327,8 @@ async def list_materials(
     student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
     await enrolled_course(course_id, student, db)
-    conditions = [Material.course_id == course_id, Material.status == "ready"]
+    conditions = [Material.course_id == course_id,
+                  Material.status.in_(AVAILABLE_MATERIAL_STATUSES)]
     if folder_id:
         conditions.append(Material.folder_id == folder_id)
     if search.strip():
@@ -334,9 +337,10 @@ async def list_materials(
     total = await db.scalar(select(func.count(Material.id)).where(*conditions)) or 0
     materials = (await db.execute(query.order_by(Material.created_at.desc()).limit(limit).offset(offset))).scalars().all()
     items = [{"id": material.id, "name": material.name, "kind": material.kind,
-             "content_type": material.content_type, "size_bytes": material.size_bytes,
-             "folder_id": material.folder_id, "unit_id": material.unit_id,
-             "chunk_count": material.chunk_count} for material in materials]
+              "content_type": material.content_type, "size_bytes": material.size_bytes,
+              "folder_id": material.folder_id, "unit_id": material.unit_id,
+              "chunk_count": material.chunk_count, "status": material.status}
+             for material in materials]
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
@@ -344,9 +348,11 @@ async def list_materials(
 async def download_material(
     material_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> dict:
-    material = await db.scalar(select(Material).join(CourseMember).where(
+    material = await db.scalar(select(Material).join(
+        CourseMember, CourseMember.course_id == Material.course_id,
+    ).where(
         Material.id == material_id,
-        Material.status == "ready",
+        Material.status.in_(AVAILABLE_MATERIAL_STATUSES),
         CourseMember.course_id == Material.course_id,
         CourseMember.profile_id == student.id,
         CourseMember.role == "student",

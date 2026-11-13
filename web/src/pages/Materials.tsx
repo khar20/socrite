@@ -177,7 +177,11 @@ export function MaterialsPage() {
         (progress) => updateUploadItem(item.id, { progress }))
       updateUploadItem(item.id, { status: 'verifying', progress: 100 })
       const result = await api<UploadResult>(`/materials/${ticket.material_id}/complete`, { method: 'POST' })
-      if (result.storage_confirmed === false) throw new Error('El almacenamiento no confirmó el archivo. Vuelve a intentarlo.')
+      if (!result.storage_confirmed) throw new Error('El almacenamiento no confirmó el archivo. Vuelve a intentarlo.')
+      if (result.id !== ticket.material_id || result.course_id !== courseId
+          || (result.folder_id || null) !== (item.folderId || null)) {
+        throw new Error('El archivo se guardó con un destino distinto al seleccionado.')
+      }
       if ((result.unit_id || null) !== (item.unitId || null)) {
         throw new Error('El archivo se guardó con una unidad distinta a la seleccionada.')
       }
@@ -185,10 +189,6 @@ export function MaterialsPage() {
         throw new Error('El archivo no quedó en cola de procesamiento.')
       }
       updateUploadItem(item.id, { status: 'uploaded', progress: 100, error: undefined })
-      void queryClient.invalidateQueries({ queryKey: ['materials', courseId] })
-      void queryClient.invalidateQueries({ queryKey: ['folders', courseId] })
-      void queryClient.invalidateQueries({ queryKey: ['course', courseId] })
-      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       return true
     } catch (error) {
       let message = error instanceof Error ? error.message : 'Error de carga'
@@ -205,11 +205,18 @@ export function MaterialsPage() {
     const pending = uploadItems.filter((item) => item.status === 'pending')
     if (!pending.length || uploading) return
     setUploading(true)
+    setOffset(0)
     try {
       let failed = 0
       for (const item of pending) {
         if (!await uploadOne(item)) failed += 1
       }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['materials', courseId] }),
+        queryClient.invalidateQueries({ queryKey: ['folders', courseId] }),
+        queryClient.invalidateQueries({ queryKey: ['course', courseId] }),
+        queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
+      ])
       if (failed) toast(`${failed} archivo${failed === 1 ? '' : 's'} no se pudo subir. Revisa la cola.`, 'error')
       else toast('Archivos subidos y confirmados en el almacenamiento.')
     } finally {
@@ -413,7 +420,7 @@ function MaterialRow({ material, unitTitle, onOpen, onEdit, onDelete, onRetry, o
   const [menuOpen, setMenuOpen] = useState(false)
   const status = material.status === 'ready' ? { tone: 'success' as const, label: 'Listo' }
     : material.status === 'failed' ? { tone: 'danger' as const, label: 'Error' }
-      : { tone: 'warning' as const, label: material.status === 'deleting' ? 'Eliminación pendiente' : material.status === 'queued' ? 'En cola' : material.status === 'processing' ? 'Procesando' : 'Subiendo' }
+      : { tone: 'warning' as const, label: material.status === 'deleting' ? 'Eliminación pendiente' : material.status === 'queued' ? 'Subido' : material.status === 'processing' ? 'Procesando' : 'Subiendo' }
   return <div className="materials-list-row">
     <button className="material-open" onClick={onOpen} disabled={material.status !== 'ready'}><span className="file-type-mark">{material.kind === 'link' ? 'URL' : material.name.split('.').pop()?.toUpperCase()}</span><span className="material-copy"><strong title={material.name}>{material.name}</strong><small>{material.kind === 'link' ? `Enlace externo${unitTitle ? ` · ${unitTitle}` : ''}` : `${formatSize(material.size_bytes)} · ${unitTitle ? `${unitTitle} · ` : ''}${material.chunk_count} fragmentos`}</small></span></button>
     <div className="material-status"><Badge tone={status.tone}>{status.label}</Badge>{material.status === 'failed' && <Button variant="outline" size="small" onClick={onRetry}><RotateCw size={14} />Reintentar</Button>}{material.status === 'ready' && material.kind === 'file' && aiReady && <><Button variant="outline" size="small" onClick={onRetry}><RotateCw size={14} />Reindexar</Button><Button variant="outline" size="small" onClick={onGenerate}><Sparkles size={14} />Crear pregunta</Button></>}<div className="row-menu-wrap"><Button variant="ghost" size="small" aria-label={`Acciones de ${material.name}`} aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={17} /></Button>{menuOpen && <div className="row-menu">{material.kind === 'file' && material.status === 'ready' && <button onClick={() => { setMenuOpen(false); onDownload() }}><ArrowDownToLine size={14} />Descargar original</button>}{material.status !== 'deleting' && <button onClick={() => { setMenuOpen(false); onEdit() }}><FileText size={14} />Editar detalles</button>}<button className="danger-text" onClick={() => { setMenuOpen(false); onDelete() }}><Trash2 size={14} />{material.status === 'deleting' ? 'Reintentar eliminación' : 'Eliminar material'}</button></div>}</div></div>

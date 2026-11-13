@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     max_upload_mb: int = 100
     abandoned_upload_hours: int = 24
+    worker_in_api: bool = True
 
     @field_validator("database_url", mode="before")
     @classmethod

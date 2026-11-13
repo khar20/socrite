@@ -9,6 +9,7 @@ import { Badge, Button, Card, EmptyState, ErrorState, Field, LoadingState, PageH
 type StudentMaterial = {
   id: string; name: string; kind: 'file' | 'link'; content_type: string; size_bytes: number
   folder_id: string | null; unit_id: string | null; chunk_count: number
+  status: 'queued' | 'processing' | 'ready' | 'failed'
 }
 type StudentCourse = Pick<Course, 'id' | 'title' | 'code' | 'description' | 'status' | 'credits' |
   'academic_period' | 'created_at' | 'unit_count' | 'material_count'>
@@ -145,6 +146,9 @@ export function StudentMaterialsPage() {
   const materials = useQuery({
     queryKey: ['student-materials', courseId, offset],
     queryFn: () => api<PageResult<StudentMaterial>>(`/student/courses/${courseId}/materials?limit=${limit}&offset=${offset}`),
+    refetchInterval: (current) => current.state.data?.items.some((material) =>
+      material.status === 'queued' || material.status === 'processing',
+    ) ? 5000 : false,
   })
   async function openMaterial(material: StudentMaterial) {
     try {
@@ -154,7 +158,7 @@ export function StudentMaterialsPage() {
   }
   if (materials.isLoading) return <LoadingState />
   if (materials.isError) return <ErrorState message="No pudimos cargar los materiales." retry={() => void materials.refetch()} />
-  return <><PageHeader title="Materiales de clase" description="Recursos que tu docente ha compartido para el curso." /><Card><div className="materials-list">{materials.data!.items.length ? materials.data!.items.map((material) => <button className="student-material-row" key={material.id} onClick={() => void openMaterial(material)}><span className="file-type-mark">{material.kind === 'link' ? 'URL' : material.name.split('.').pop()?.toUpperCase()}</span><span className="material-copy"><strong>{material.name}</strong><small>{material.kind === 'link' ? 'Enlace externo' : `${Math.ceil(material.size_bytes / 1024)} KB · ${material.chunk_count} fragmentos`}</small></span><ArrowRight size={16} /></button>) : <EmptyState icon={FileText} title="Aún no hay materiales" description="Los documentos y enlaces del curso aparecerán aquí cuando tu docente los comparta." />}</div></Card><PaginationControls total={materials.data!.total} limit={limit} offset={offset} onChange={setOffset} /></>
+  return <><PageHeader title="Materiales de clase" description="Recursos que tu docente ha compartido para el curso." /><Card><div className="materials-list">{materials.data!.items.length ? materials.data!.items.map((material) => <button className="student-material-row" key={material.id} onClick={() => void openMaterial(material)}><span className="file-type-mark">{material.kind === 'link' ? 'URL' : material.name.split('.').pop()?.toUpperCase()}</span><span className="material-copy"><strong>{material.name}</strong><small>{material.kind === 'link' ? 'Enlace externo' : `${material.status === 'queued' ? 'Subido' : material.status === 'processing' ? 'Procesando' : material.status === 'failed' ? 'Texto no disponible' : 'Listo'} · ${Math.ceil(material.size_bytes / 1024)} KB · ${material.chunk_count} fragmentos`}</small></span><ArrowRight size={16} /></button>) : <EmptyState icon={FileText} title="Aún no hay materiales" description="Los documentos y enlaces del curso aparecerán aquí cuando tu docente los comparta." />}</div></Card><PaginationControls total={materials.data!.total} limit={limit} offset={offset} onChange={setOffset} /></>
 }
 
 export function StudentAssessmentsPage() {

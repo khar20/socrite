@@ -25,7 +25,7 @@ Create two services from `api/Dockerfile`:
 
 - Root directory / Docker context: `api`
 - Web service: builder `Dockerfile`, health check `/health/ready`, pre-deploy command `alembic upgrade head`.
-- Worker service: same root and Dockerfile, start command `python worker.py`, no health check.
+- Worker service (optional): same root and Dockerfile, start command `python worker.py`, no health check. The API processes queued jobs itself by default, so this service is only needed for a dedicated processing process; set `WORKER_IN_API=false` on the web service when it runs.
 - Set environment variables in the Railway dashboard, including `DATABASE_URL`, storage credentials, `AI_API_KEY`, `ADMIN_EMAILS`, `TEACHER_EMAILS`, and `CORS_ORIGINS`.
 - Set `CORS_ORIGINS=https://socrite.kharont.dev`.
 - Set `APP_ENV=production` to enable secure cookies and strict environment validation.
@@ -63,6 +63,7 @@ Fill in the values in `.env`:
 - AI requests run only in the FastAPI backend and worker. The key is never sent to the frontend or exposed through `VITE_*` variables.
 - In production, the API validates `APP_ENV`, requires `DATABASE_URL`, rejects placeholder secrets, and requires explicit HTTPS CORS origins. The frontend build allows only `VITE_API_URL` as a public variable.
 - `ABANDONED_UPLOAD_HOURS`: time an uncompleted upload remains before the worker removes it; defaults to 24 hours.
+- `WORKER_IN_API`: process queued material jobs inside the API process; defaults to `true`. Set it to `false` when running the dedicated `worker.py` service.
 - `ADMIN_EMAILS`: comma-separated bootstrap administrator addresses. Admins can manage student registration emails.
 - `TEACHER_EMAILS`: comma-separated teacher addresses allowed to register.
 - Student registrations are allowed only for addresses in the admin-managed `student_allowlist` table.
@@ -88,7 +89,7 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 Before running migrations, make sure `DATABASE_URL` targets the intended development branch. The same direct connection is used by the API and migrations; do not run migrations against a shared production branch without reviewing the target.
 
-To process uploaded materials, run the worker in another terminal:
+Uploaded materials are processed by the API by default. To run processing in a separate process instead, set `WORKER_IN_API=false` and start the worker:
 
 ```sh
 cd api

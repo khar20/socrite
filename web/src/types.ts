@@ -55,7 +55,7 @@ export type Material = {
 
 export type Folder = { id: string; name: string; count: number }
 
-export type UploadResult = Material & { storage_confirmed?: boolean }
+export type UploadResult = Material & { storage_confirmed: boolean }
 
 export type DashboardData = {
   course_count: number
