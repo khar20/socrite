@@ -95,6 +95,8 @@
 .materials-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-block-end: 12px; }
 .materials-toolbar h2 { font-size: 15px; }
 .materials-toolbar p { margin-block-start: 3px; }
+.materials-filters { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.materials-filters .select-input { width: auto; min-height: 34px; max-width: 190px; font-size: 11.5px; }
 .materials-search { width: min(250px, 45%); }
 .materials-search .text-input { min-height: 34px; font-size: 11.5px; }
 .materials-list { padding: 0 18px; }
@@ -348,6 +350,8 @@
 }
 @media (max-width: 440px) {
   .materials-toolbar { align-items: flex-start; flex-direction: column; }
+  .materials-filters { width: 100%; flex-wrap: wrap; justify-content: flex-start; }
+  .materials-filters .select-input { max-width: none; }
   .materials-search { width: 100%; }
   .unit-card-header { flex-wrap: wrap; }
   .unit-controls { margin-inline-start: auto; }

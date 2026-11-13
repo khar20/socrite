@@ -227,6 +227,7 @@ async def main() -> None:
         raise RuntimeError("DATABASE_URL is not configured")
     loop = asyncio.get_running_loop()
     last_reconciliation = 0.0
+    logger.info("Socrite worker started; polling for processing jobs")
     while True:
         try:
             now = loop.time()

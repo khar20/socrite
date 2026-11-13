@@ -147,7 +147,8 @@ async def delete_folder(
 
 @router.get("/courses/{course_id}/materials")
 async def list_materials(
-    course_id: str, folder_id: str | None = None, search: str = Query(default="", max_length=160),
+    course_id: str, folder_id: str | None = None, unit_id: str | None = None,
+    search: str = Query(default="", max_length=160),
     limit: int = Query(default=25, ge=1, le=100), offset: int = Query(default=0, ge=0),
     teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -155,6 +156,8 @@ async def list_materials(
     conditions = [Material.course_id == course_id]
     if folder_id:
         conditions.append(Material.folder_id == folder_id)
+    if unit_id:
+        conditions.append(Material.unit_id == unit_id)
     if search.strip():
         conditions.append(Material.name.ilike(f"%{search.strip()}%"))
     query = select(Material).where(*conditions)
