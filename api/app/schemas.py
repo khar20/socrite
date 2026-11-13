@@ -13,6 +13,17 @@ from pydantic import (
 )
 
 
+def uppercase_required_name(value: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError("This field cannot be blank")
+    return value.upper()
+
+
+def uppercase_optional_text(value: str) -> str:
+    return value.strip().upper()
+
+
 class UserOut(BaseModel):
     id: str
     email: str
@@ -37,11 +48,8 @@ class AccountNamesIn(BaseModel):
 
     @field_validator("first_name", "paternal_last_name", "maternal_last_name")
     @classmethod
-    def trim_name(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("This field cannot be blank")
-        return value
+    def normalize_name(cls, value: str) -> str:
+        return uppercase_required_name(value)
 
 
 class RegisterIn(AccountNamesIn):
@@ -82,6 +90,16 @@ class CourseCreate(BaseModel):
     credits: int = Field(default=0, ge=0, le=60)
     academic_period: str = Field(default="", max_length=80)
 
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        return uppercase_required_name(value)
+
+    @field_validator("code", "academic_period")
+    @classmethod
+    def normalize_metadata(cls, value: str) -> str:
+        return uppercase_optional_text(value)
+
 
 class CourseUpdate(CourseCreate):
     status: str = Field(default="draft", pattern="^(draft|active|archived)$")
@@ -114,10 +132,20 @@ class UnitIn(BaseModel):
     weeks: str = Field(default="", max_length=80)
     hours: int = Field(default=0, ge=0, le=10000)
 
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        return uppercase_required_name(value)
+
 
 class TopicIn(BaseModel):
     title: str = Field(min_length=2, max_length=240)
     position: int = Field(default=0, ge=0)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        return uppercase_required_name(value)
 
 
 class SkillIn(TopicIn):
@@ -127,6 +155,11 @@ class SkillIn(TopicIn):
 class TopicUpdate(BaseModel):
     title: str = Field(min_length=2, max_length=240)
     position: int = Field(default=0, ge=0)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        return uppercase_required_name(value)
 
 
 class SkillUpdate(TopicUpdate):
@@ -237,6 +270,11 @@ class AssessmentCreate(BaseModel):
     title: str = Field(min_length=2, max_length=200)
     description: str = Field(default="", max_length=5000)
     kind: str = Field(default="practice", pattern="^(diagnostic|practice|quiz|transfer)$")
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        return uppercase_required_name(value)
 
 
 class AssessmentQuestionIn(BaseModel):

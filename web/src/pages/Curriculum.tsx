@@ -98,7 +98,7 @@ export function CurriculumPage() {
       </div>
     </Card>)}</div>}
     <Modal open={!!editor} onClose={() => setEditor(null)} title={editorTitle} description={editor?.kind !== 'unit' ? editor?.unit?.title : 'Puedes ajustar los detalles de la unidad después.'} onSubmit={save} submitLabel="Guardar" busy={busy}>
-      <Field label={editor?.kind === 'unit' ? 'Nombre de la unidad' : editor?.kind === 'topic' ? 'Nombre del tema' : 'Nombre de la habilidad'} required><TextInput autoFocus value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={240} placeholder="Escribe un nombre claro" /></Field>
+      <Field label={editor?.kind === 'unit' ? 'Nombre de la unidad' : editor?.kind === 'topic' ? 'Nombre del tema' : 'Nombre de la habilidad'} required><TextInput autoFocus value={title} onChange={(event) => setTitle(event.target.value.toUpperCase())} required maxLength={240} placeholder="Escribe un nombre claro" /></Field>
       {(editor?.kind === 'unit' || editor?.kind === 'skill') && <Field label={editor.kind === 'unit' ? 'Resultado de aprendizaje' : 'Descripción'}><TextArea rows={3} value={outcome} onChange={(event) => setOutcome(event.target.value)} maxLength={5000} placeholder="Qué podrá hacer el estudiante al finalizar…" /></Field>}
     </Modal>
   </>

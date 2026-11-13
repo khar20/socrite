@@ -72,10 +72,10 @@ export function LoginPage() {
         {(error || authError) && <div className="inline-alert alert-error" role="alert">{error || authError}</div>}
         <form onSubmit={submit}>
           {mode === 'sign-up' && <>
-            <Field label="Nombres" required><TextInput autoFocus value={firstName} onChange={(event) => setFirstName(event.target.value)} autoComplete="given-name" required maxLength={100} /></Field>
+            <Field label="Nombres" required><TextInput autoFocus value={firstName} onChange={(event) => setFirstName(event.target.value.toUpperCase())} autoComplete="given-name" required maxLength={100} /></Field>
             <div className="form-grid">
-              <Field label="Apellido paterno" required><TextInput value={paternalLastName} onChange={(event) => setPaternalLastName(event.target.value)} autoComplete="family-name" required maxLength={100} /></Field>
-              <Field label="Apellido materno" required><TextInput value={maternalLastName} onChange={(event) => setMaternalLastName(event.target.value)} required maxLength={100} /></Field>
+              <Field label="Apellido paterno" required><TextInput value={paternalLastName} onChange={(event) => setPaternalLastName(event.target.value.toUpperCase())} autoComplete="family-name" required maxLength={100} /></Field>
+              <Field label="Apellido materno" required><TextInput value={maternalLastName} onChange={(event) => setMaternalLastName(event.target.value.toUpperCase())} required maxLength={100} /></Field>
             </div>
           </>}
           <Field label="Correo electrónico" required><div className="input-with-icon"><Mail size={16} /><TextInput type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required maxLength={320} placeholder="nombre@universidad.edu" /></div></Field>

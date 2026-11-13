@@ -42,10 +42,10 @@ export function AccountPage() {
     <div className="account-layout">
       <Card><div className="card-heading"><h2>Datos personales</h2><p className="muted-text text-small">Tu correo no se puede cambiar desde la cuenta.</p></div><form className="card-content settings-form" onSubmit={(event) => { event.preventDefault(); saveNames.mutate() }}>
         <Field label="Correo electrónico"><TextInput value={profile?.email || ''} readOnly /></Field>
-        <Field label="Nombres" required><TextInput value={names.first_name} onChange={(event) => setNames({ ...names, first_name: event.target.value })} required maxLength={100} /></Field>
+        <Field label="Nombres" required><TextInput value={names.first_name} onChange={(event) => setNames({ ...names, first_name: event.target.value.toUpperCase() })} required maxLength={100} /></Field>
         <div className="form-grid">
-          <Field label="Apellido paterno" required><TextInput value={names.paternal_last_name} onChange={(event) => setNames({ ...names, paternal_last_name: event.target.value })} required maxLength={100} /></Field>
-          <Field label="Apellido materno" required><TextInput value={names.maternal_last_name} onChange={(event) => setNames({ ...names, maternal_last_name: event.target.value })} required maxLength={100} /></Field>
+          <Field label="Apellido paterno" required><TextInput value={names.paternal_last_name} onChange={(event) => setNames({ ...names, paternal_last_name: event.target.value.toUpperCase() })} required maxLength={100} /></Field>
+          <Field label="Apellido materno" required><TextInput value={names.maternal_last_name} onChange={(event) => setNames({ ...names, maternal_last_name: event.target.value.toUpperCase() })} required maxLength={100} /></Field>
         </div>
         <div className="form-actions"><Button type="submit" disabled={saveNames.isPending}><Save size={15} />Guardar datos</Button></div>
       </form></Card>

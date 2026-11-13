@@ -69,7 +69,7 @@ export function AssessmentsPage() {
     })}</div>}
     {!publishedQuestions.length && <div className="inline-alert alert-info page-note"><ClipboardCheck size={16} /><span>Publica preguntas del banco antes de agregarlas a una evaluación.</span></div>}
     <Modal open={open} onClose={() => setOpen(false)} title="Nueva evaluación" description="La evaluación queda como borrador hasta que tenga preguntas y la publiques." onSubmit={(event) => { event.preventDefault(); create.mutate() }} submitLabel="Crear borrador" busy={create.isPending}>
-      <Field label="Título" required><TextInput autoFocus value={title} onChange={(event) => setTitle(event.target.value)} required minLength={2} maxLength={200} placeholder="Ej. Diagnóstico de funciones" /></Field>
+      <Field label="Título" required><TextInput autoFocus value={title} onChange={(event) => setTitle(event.target.value.toUpperCase())} required minLength={2} maxLength={200} placeholder="Ej. Diagnóstico de funciones" /></Field>
       <Field label="Tipo"><Select value={kind} onChange={(event) => setKind(event.target.value as Assessment['kind'])}>{kinds.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
       <Field label="Instrucciones"><TextArea rows={3} value={description} onChange={(event) => setDescription(event.target.value)} maxLength={5000} placeholder="Indica cómo prepararse y qué se espera en las respuestas." /></Field>
     </Modal>
