@@ -6,7 +6,7 @@ from uuid import uuid4
 from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import delete, or_, select, update
 
-from app.ai import embed_texts
+from app.ai import embed_texts, extract_image_text
 from app.config import settings
 from app.db import SessionLocal
 from app.models import Material, MaterialChunk, ProcessingJob
@@ -15,6 +15,34 @@ from app.services.ingestion import chunk_pages, extract_pages
 from app.storage import storage_client
 
 logger = logging.getLogger("socrite.worker")
+
+
+async def extract_material_markdown_pages(filename: str, content: bytes) -> list[tuple[int, str]]:
+    pages = await asyncio.to_thread(extract_pages, filename, content)
+    if not settings.ai_vision_configured and any(page.images and not page.has_native_text for page in pages):
+        raise ValueError("Configure an AI vision model to index this image-based file")
+    if not settings.ai_vision_configured and any(page.images for page in pages):
+        logger.warning("Skipping embedded-image OCR for %s; no vision model is configured", filename)
+
+    markdown_pages = []
+    for page in pages:
+        image_text = []
+        if settings.ai_vision_configured:
+            for image in page.images:
+                text = await extract_image_text(image)
+                if text:
+                    image_text.append(text)
+        if not page.has_native_text and not image_text:
+            continue
+        markdown = page.markdown
+        if image_text:
+            image_section = "\n\n".join(image_text)
+            if page.has_native_text:
+                markdown += f"\n\n### Texto visible en imágenes\n\n{image_section}"
+            else:
+                markdown += f"\n\n{image_section}"
+        markdown_pages.append((page.page_number, markdown))
+    return markdown_pages
 
 
 async def renew_lease(job_id: str, lease_token: str, stop: asyncio.Event) -> None:
@@ -68,7 +96,8 @@ async def process_job(job_id: str, material_id: str, lease_token: str) -> None:
             client.get_object, Bucket=settings.neon_storage_bucket, Key=object_key
         )
         content = await asyncio.to_thread(stored["Body"].read)
-        chunks = await asyncio.to_thread(lambda: chunk_pages(extract_pages(filename, content)))
+        markdown_pages = await extract_material_markdown_pages(filename, content)
+        chunks = await asyncio.to_thread(chunk_pages, markdown_pages)
         if not chunks:
             raise ValueError("No readable text was found in this file")
 

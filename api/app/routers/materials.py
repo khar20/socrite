@@ -34,6 +34,14 @@ ALLOWED_TYPES = {
     ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
     ".pptx": {"application/vnd.openxmlformats-officedocument.presentationml.presentation"},
     ".txt": {"text/plain"},
+    ".png": {"image/png"},
+    ".jpg": {"image/jpeg"},
+    ".jpeg": {"image/jpeg"},
+    ".webp": {"image/webp"},
+    ".tif": {"image/tiff"},
+    ".tiff": {"image/tiff"},
+    ".bmp": {"image/bmp"},
+    ".gif": {"image/gif"},
 }
 
 
@@ -177,7 +185,7 @@ async def begin_upload(
         raise HTTPException(status_code=503, detail="Neon Object Storage is not configured")
     extension = Path(data.name).suffix.casefold()
     if extension not in ALLOWED_TYPES or data.content_type not in ALLOWED_TYPES[extension]:
-        raise HTTPException(status_code=415, detail="Upload a PDF, DOCX, PPTX, or TXT file")
+        raise HTTPException(status_code=415, detail="Upload a PDF, DOCX, PPTX, TXT, or supported image file")
     if data.size_bytes > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"File exceeds the {settings.max_upload_mb} MB limit")
     await validate_folder(data.folder_id, course_id, db)

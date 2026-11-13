@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     ai_api_key: str = ""
     ai_chat_model: str = "openai/gpt-4o-mini"
     ai_embedding_model: str = "openai/text-embedding-3-small"
+    ai_vision_model: str = "google/gemini-3.1-flash-lite"
     admin_emails: str = ""
     teacher_emails: str = ""
     cors_origins: str = "http://localhost:5173"
@@ -60,6 +61,10 @@ class Settings(BaseSettings):
                        for value in (self.ai_base_url, self.ai_api_key))
         models = all((self.ai_chat_model, self.ai_embedding_model))
         return external and models
+
+    @property
+    def ai_vision_configured(self) -> bool:
+        return self.ai_configured and bool(self.ai_vision_model)
 
     @property
     def ai_request_base_url(self) -> str:

@@ -1,8 +1,14 @@
+import asyncio
+import base64
 import json
+import logging
 
 import httpx
+from PIL import Image
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class AIProviderError(RuntimeError):
@@ -39,6 +45,55 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     if any(len(embedding) != 1536 for embedding in embeddings):
         raise AIProviderError("The configured embedding model must return 1536 dimensions")
     return embeddings
+
+
+async def extract_image_text(image_bytes: bytes) -> str:
+    try:
+        from app.services.ingestion import optimize_image
+
+        optimized = await asyncio.to_thread(optimize_image, image_bytes)
+    except (Image.DecompressionBombError, OSError, ValueError) as exc:
+        logger.warning("Skipping an image that could not be prepared for OCR: %s", type(exc).__name__)
+        return ""
+
+    image_url = f"data:image/jpeg;base64,{base64.b64encode(optimized).decode('ascii')}"
+    data = await request_ai("chat/completions", {
+        "model": settings.ai_vision_model,
+        "temperature": 0,
+        "max_tokens": 4096,
+        "messages": [
+            {"role": "system", "content": (
+                "Eres un sistema OCR. Transcribe solamente el texto legible que aparece en la imagen, "
+                "con prioridad en español y respetando acentos y signos. Devuelve únicamente la transcripción "
+                "en Markdown, conservando títulos, párrafos, listas y tablas cuando sean visibles. "
+                "No describas imágenes, diagramas ni gráficos. No añadas pies de foto, explicaciones, "
+                "interpretaciones, resúmenes ni texto inferido. Omite lo ilegible en vez de adivinar. "
+                "Si no hay texto legible, devuelve una cadena vacía."
+            )},
+            {"role": "user", "content": [
+                {"type": "text", "text": "Transcribe solo el texto visible en esta imagen."},
+                {"type": "image_url", "image_url": {"url": image_url, "detail": "high"}},
+            ]},
+        ],
+    })
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (IndexError, KeyError, TypeError) as exc:
+        raise AIProviderError("The vision model returned an invalid OCR response") from exc
+
+    if isinstance(content, list):
+        content = "\n".join(
+            part["text"] for part in content
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        )
+    if not isinstance(content, str):
+        raise AIProviderError("The vision model returned an invalid OCR response")
+    lines = content.strip().splitlines()
+    if lines and lines[0].strip().startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
 
 
 async def generate_question(context: str) -> str:
