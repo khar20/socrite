@@ -189,6 +189,45 @@ async def generate_practice_assessment(
     return result
 
 
+async def generate_tutor_hint(messages: list[dict], skill: str, reference: str,
+                              sources: list[dict], level: int) -> str:
+    source_text = "\n\n".join(
+        f"[{index + 1}] {source['material_name']} (p. {source['page_number'] or '—'}):\n{source['content']}"
+        for index, source in enumerate(sources)
+    )
+    guidance = {
+        0: "Pista conceptual: nombra la idea central y formula una pregunta amplia que invite a recordar.",
+        1: "Pista específica: identifica el paso o concepto que falta y ofrece una pista concreta sin dar la solución.",
+        2: "Revisión guiada: explica un procedimiento de referencia paso a paso y pide al estudiante que lo complete "
+           "con sus propias palabras y justifique por qué funciona.",
+    }[level]
+    system = (
+        "Eres un tutor universitario socrático que responde en español. "
+        f"{guidance} No resuelvas la tarea por el estudiante ni afirmes que domina una habilidad. "
+        "Basa los hechos del curso solamente en la referencia de la habilidad y las fuentes recuperadas. "
+        "Si no hay información suficiente, dilo claramente y formula una pregunta general sin inventar contenido. "
+        "Cuando uses una fuente, añade [n] al final de la afirmación correspondiente. Sé breve."
+    )
+    if skill:
+        system += f"\nHabilidad objetivo: {skill}."
+    if reference:
+        system += f"\nReferencia de la habilidad: {reference[:4000]}"
+    if source_text:
+        system += f"\n\nFuentes recuperadas:\n{source_text[:10000]}"
+    data = await request_ai("chat/completions", {
+        "model": settings.ai_chat_model,
+        "temperature": 0.4,
+        "messages": [{"role": "system", "content": system}, *messages[-10:]],
+    })
+    try:
+        reply = data["choices"][0]["message"]["content"].strip()
+    except (IndexError, KeyError, TypeError, AttributeError) as exc:
+        raise AIProviderError("The AI provider returned an invalid tutor hint") from exc
+    if not reply:
+        raise AIProviderError("The AI provider returned an empty tutor hint")
+    return reply
+
+
 async def evaluate_open_response(prompt: str, response: str, rubric: list[dict]) -> tuple[int, str]:
     criteria = "\n".join(f"- {item['criterion']}" for item in rubric)
     data = await request_ai("chat/completions", {

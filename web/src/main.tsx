@@ -10,6 +10,7 @@ import './styles/base.css'
 import './styles/layout.css'
 import './styles/components.css'
 import './styles/pages.css'
+import './styles/student.css'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 20_000 } },

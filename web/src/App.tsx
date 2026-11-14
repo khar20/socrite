@@ -11,9 +11,14 @@ import { StudentsPage, ReviewsPage } from './pages/TeacherOperations'
 import { QuestionsPage } from './pages/Questions'
 import { SettingsPage } from './pages/Settings'
 import { ActivityPage } from './pages/Activity'
-import { StudentDashboardPage, StudentCoursePage, StudentCurriculumPage, StudentMaterialsPage,
-  StudentAssessmentsPage, StudentAttemptPage, StudentProgressPage, StudentJoinPage,
+import { StudentDashboardPage, StudentCoursePage, StudentMaterialsPage,
+  StudentAttemptPage, StudentProgressPage, StudentJoinPage,
   StudentTutorPage, StudentFeedbackPage } from './pages/Student'
+import { StudentHomePage } from './pages/student/Home'
+import { StudentPathPage } from './pages/student/Path'
+import { StudentPracticePage } from './pages/student/Practice'
+import { StudentReviewPage } from './pages/student/Review'
+import { StudentProblemsPage } from './pages/student/Problems'
 import { AssessmentsPage } from './pages/Assessments'
 import { AccountPage } from './pages/Account'
 import { StudentAllowlistPage } from './pages/StudentAllowlist'
@@ -66,10 +71,15 @@ export default function App() {
     <Route path="/student" element={<ProtectedLayout role="student" />}>
       <Route index element={<StudentDashboardPage />} />
       <Route path="courses" element={<StudentDashboardPage />} />
-      <Route path="courses/:courseId" element={<StudentCoursePage />} />
-      <Route path="courses/:courseId/curriculum" element={<StudentCurriculumPage />} />
+      <Route path="courses/:courseId" element={<StudentHomePage />} />
+      <Route path="courses/:courseId/overview" element={<StudentCoursePage />} />
+      <Route path="courses/:courseId/path" element={<StudentPathPage />} />
+      <Route path="courses/:courseId/curriculum" element={<Navigate to="../path" replace />} />
       <Route path="courses/:courseId/materials" element={<StudentMaterialsPage />} />
-      <Route path="courses/:courseId/assessments" element={<StudentAssessmentsPage />} />
+      <Route path="courses/:courseId/practice" element={<StudentPracticePage />} />
+      <Route path="courses/:courseId/review" element={<StudentReviewPage />} />
+      <Route path="courses/:courseId/problems" element={<StudentProblemsPage />} />
+      <Route path="courses/:courseId/assessments" element={<Navigate to="../practice" replace />} />
       <Route path="courses/:courseId/tutor" element={<StudentTutorPage />} />
       <Route path="courses/:courseId/feedback" element={<StudentFeedbackPage />} />
       <Route path="courses/:courseId/progress" element={<StudentProgressPage />} />

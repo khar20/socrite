@@ -21,11 +21,11 @@ def review_interval(interval_days: int, repetitions: int, rating: int) -> tuple[
     if rating == 0:
         return 1, 0
     if rating == 1:
-        return max(1, round(interval_days * 1.2)), repetitions + 1
-    if rating == 2:
-        next_days = 1 if repetitions == 0 else 3 if repetitions == 1 else round(interval_days * 2.5)
-        return next_days, repetitions + 1
-    next_days = 4 if repetitions == 0 else 6 if repetitions == 1 else round(interval_days * 3.5)
+        next_days = max(2, round(interval_days * 1.3))
+    elif rating == 2:
+        next_days = max(3, round(interval_days * 2.2))
+    else:
+        next_days = round(interval_days * 3.4) + 1
     return next_days, repetitions + 1
 
 
@@ -34,7 +34,6 @@ async def record_skill_evidence(
     student_id: str,
     skill_id: str,
     correct: bool,
-    rating: int | None = None,
     *,
     course_id: str | None = None,
     evidence_type: str = "assessment",
@@ -83,14 +82,9 @@ async def record_skill_evidence(
         ReviewSchedule.skill_id == skill_id,
     ).with_for_update())
     if schedule is None:
-        schedule = ReviewSchedule(student_id=student_id, skill_id=skill_id,
-                                  due_at=datetime.now(UTC), interval_days=1, repetitions=0, lapses=0)
-        db.add(schedule)
-    selected_rating = rating if rating is not None else (2 if correct else 0)
-    interval, repetitions = review_interval(schedule.interval_days, schedule.repetitions, selected_rating)
-    schedule.interval_days = interval
-    schedule.repetitions = repetitions
-    schedule.last_rating = selected_rating
-    schedule.lapses += int(selected_rating == 0)
-    schedule.due_at = datetime.now(UTC) + timedelta(days=interval)
+        db.add(ReviewSchedule(
+            student_id=student_id, skill_id=skill_id,
+            due_at=datetime.now(UTC) + timedelta(days=1),
+            interval_days=1, repetitions=0, lapses=0,
+        ))
     return mastery.probability

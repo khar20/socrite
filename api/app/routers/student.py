@@ -1,12 +1,18 @@
 import hashlib
 import math
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import AIProviderError, embed_texts, evaluate_open_response, generate_tutor_reply
+from app.ai import (
+    AIProviderError,
+    embed_texts,
+    evaluate_open_response,
+    generate_tutor_hint,
+    generate_tutor_reply,
+)
 from app.auth import require_student
 from app.config import settings
 from app.db import get_db
@@ -34,7 +40,13 @@ from app.models import (
     Unit,
     User,
 )
-from app.schemas import ReflectionCreate, ReviewRatingIn, StudentAnswerIn, TutorMessageCreate
+from app.schemas import (
+    ReflectionCreate,
+    ReviewRatingIn,
+    StudentAnswerIn,
+    TutorHintCreate,
+    TutorMessageCreate,
+)
 from app.services.audit import record_event
 from app.services.pedagogy import record_skill_evidence, review_interval
 from app.storage import storage_client
@@ -166,11 +178,7 @@ async def get_course(
             "material_count": material_count}
 
 
-@router.get("/courses/{course_id}/next-activity")
-async def next_activity(
-    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
-) -> dict:
-    await enrolled_course(course_id, student, db)
+async def recommend_activity(course_id: str, student: User, db: AsyncSession) -> dict:
     now = datetime.now(UTC)
     skills = (await db.execute(
         select(Skill, Unit).join(Unit, Unit.id == Skill.unit_id)
@@ -297,6 +305,205 @@ async def next_activity(
     }
 
 
+@router.get("/courses/{course_id}/next-activity")
+async def next_activity(
+    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
+) -> dict:
+    await enrolled_course(course_id, student, db)
+    return await recommend_activity(course_id, student, db)
+
+
+def average_probability(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def study_streak(days: set[date], today: date) -> int:
+    cursor = today if today in days else today - timedelta(days=1)
+    streak = 0
+    while cursor in days:
+        streak += 1
+        cursor -= timedelta(days=1)
+    return streak
+
+
+@router.get("/courses/{course_id}/home")
+async def learning_home(
+    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
+) -> dict:
+    course = await enrolled_course(course_id, student, db)
+    now = datetime.now(UTC)
+    units = (await db.execute(
+        select(Unit).where(Unit.course_id == course_id).order_by(Unit.position)
+    )).scalars().all()
+    skills = (await db.execute(
+        select(Skill, Unit).join(Unit, Unit.id == Skill.unit_id)
+        .where(Unit.course_id == course_id).order_by(Unit.position, Skill.position)
+    )).all()
+    skill_ids = [skill.id for skill, _ in skills]
+    mastery_rows = (await db.execute(select(StudentSkillMastery).where(
+        StudentSkillMastery.student_id == student.id,
+        StudentSkillMastery.skill_id.in_(skill_ids),
+    ))).scalars().all() if skill_ids else []
+    mastery = {row.skill_id: row for row in mastery_rows}
+    schedules = (await db.execute(select(ReviewSchedule).where(
+        ReviewSchedule.student_id == student.id,
+        ReviewSchedule.skill_id.in_(skill_ids),
+    ))).scalars().all() if skill_ids else []
+    schedule_by_skill = {row.skill_id: row for row in schedules}
+
+    probabilities = [mastery[skill.id].probability if skill.id in mastery else 0.1
+                     for skill, _ in skills]
+    due = [(skill, unit, schedule_by_skill[skill.id]) for skill, unit in skills
+           if skill.id in schedule_by_skill and schedule_by_skill[skill.id].due_at <= now]
+    due.sort(key=lambda item: item[2].due_at)
+
+    recent = (await db.execute(
+        select(LearningEvidenceEvent, Skill)
+        .join(Skill, Skill.id == LearningEvidenceEvent.skill_id)
+        .where(LearningEvidenceEvent.student_id == student.id,
+               LearningEvidenceEvent.course_id == course_id)
+        .order_by(LearningEvidenceEvent.created_at.desc()).limit(6)
+    )).all()
+    activity_days = (await db.execute(
+        select(LearningEvidenceEvent.created_at).where(
+            LearningEvidenceEvent.student_id == student.id,
+            LearningEvidenceEvent.course_id == course_id,
+        ).order_by(LearningEvidenceEvent.created_at.desc()).limit(500)
+    )).scalars().all()
+    days = {timestamp.date() for timestamp in activity_days}
+    today = now.date()
+
+    skills_by_unit: dict[str, list[float]] = {}
+    for skill, unit in skills:
+        probability = mastery[skill.id].probability if skill.id in mastery else 0.1
+        skills_by_unit.setdefault(unit.id, []).append(probability)
+
+    return {
+        "course": {"id": course.id, "title": course.title, "code": course.code,
+                   "description": course.description, "status": course.status,
+                   "credits": course.credits, "academic_period": course.academic_period},
+        "summary": {
+            "average_mastery": average_probability(probabilities),
+            "mastered_skills": sum(probability >= 0.85 for probability in probabilities),
+            "total_skills": len(skills),
+            "due_reviews": len(due),
+            "streak_days": study_streak(days, today),
+            "evidence_count": sum(row.observations for row in mastery_rows),
+        },
+        "next_activity": await recommend_activity(course_id, student, db),
+        "due_skills": [{
+            "skill_id": skill.id, "skill": skill.title, "unit": unit.title,
+            "unit_id": unit.id, "unit_position": unit.position,
+            "probability": mastery[skill.id].probability if skill.id in mastery else None,
+            "due_at": schedule.due_at, "interval_days": schedule.interval_days,
+            "repetitions": schedule.repetitions,
+        } for skill, unit, schedule in due],
+        "units": [{
+            "id": unit.id, "title": unit.title, "position": unit.position,
+            "skill_count": len(skills_by_unit.get(unit.id, [])),
+            "mastery": average_probability(skills_by_unit.get(unit.id, [])),
+        } for unit in units],
+        "recent_activity": [{
+            "skill": skill.title, "is_correct": event.is_correct,
+            "is_transfer": event.is_transfer, "created_at": event.created_at,
+        } for event, skill in recent],
+    }
+
+
+@router.get("/courses/{course_id}/path")
+async def learning_path(
+    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
+) -> dict:
+    course = await enrolled_course(course_id, student, db)
+    units = (await db.execute(
+        select(Unit).where(Unit.course_id == course_id).order_by(Unit.position)
+    )).scalars().all()
+    if not units:
+        return {"course": {"id": course.id, "title": course.title, "code": course.code}, "units": []}
+    unit_ids = [unit.id for unit in units]
+    topics = (await db.execute(
+        select(Topic).where(Topic.unit_id.in_(unit_ids)).order_by(Topic.position)
+    )).scalars().all()
+    skills = (await db.execute(
+        select(Skill).where(Skill.unit_id.in_(unit_ids)).order_by(Skill.position)
+    )).scalars().all()
+    skill_ids = [skill.id for skill in skills]
+    mastery_rows = (await db.execute(select(StudentSkillMastery).where(
+        StudentSkillMastery.student_id == student.id,
+        StudentSkillMastery.skill_id.in_(skill_ids),
+    ))).scalars().all() if skill_ids else []
+    mastery = {row.skill_id: row for row in mastery_rows}
+    schedules = (await db.execute(select(ReviewSchedule).where(
+        ReviewSchedule.student_id == student.id,
+        ReviewSchedule.skill_id.in_(skill_ids),
+    ))).scalars().all() if skill_ids else []
+    schedule_by_skill = {row.skill_id: row for row in schedules}
+    materials = (await db.execute(select(Material).where(
+        Material.course_id == course_id,
+        Material.status.in_(AVAILABLE_MATERIAL_STATUSES),
+    ).order_by(Material.created_at))).scalars().all()
+
+    ranked = (
+        select(
+            Material.unit_id.label("unit_id"),
+            MaterialChunk.content.label("content"),
+            func.row_number().over(
+                partition_by=Material.unit_id,
+                order_by=[Material.created_at, MaterialChunk.chunk_index],
+            ).label("rank"),
+        )
+        .join(Material, Material.id == MaterialChunk.material_id)
+        .where(Material.course_id == course_id, Material.status == "ready",
+               Material.unit_id.is_not(None))
+        .subquery()
+    )
+    excerpts = dict((await db.execute(
+        select(ranked.c.unit_id, ranked.c.content).where(ranked.c.rank == 1)
+    )).all())
+
+    topics_by_unit: dict[str, list[Topic]] = {}
+    skills_by_unit: dict[str, list[Skill]] = {}
+    materials_by_unit: dict[str, list[Material]] = {}
+    for topic in topics:
+        topics_by_unit.setdefault(topic.unit_id, []).append(topic)
+    for skill in skills:
+        skills_by_unit.setdefault(skill.unit_id, []).append(skill)
+    for material in materials:
+        if material.unit_id:
+            materials_by_unit.setdefault(material.unit_id, []).append(material)
+
+    result = []
+    for unit in units:
+        unit_skills = skills_by_unit.get(unit.id, [])
+        probabilities = [mastery[skill.id].probability if skill.id in mastery else 0.1
+                         for skill in unit_skills]
+        unit_materials = materials_by_unit.get(unit.id, [])
+        excerpt = excerpts.get(unit.id)
+        if excerpt:
+            excerpt = " ".join(excerpt.split())[:360]
+        result.append({
+            "id": unit.id, "title": unit.title, "outcome": unit.outcome,
+            "position": unit.position, "hours": unit.hours,
+            "mastery": average_probability(probabilities) if unit_skills else None,
+            "excerpt": excerpt,
+            "topics": [{"id": topic.id, "title": topic.title} for topic in topics_by_unit.get(unit.id, [])],
+            "skills": [{
+                "id": skill.id, "title": skill.title, "description": skill.description,
+                "probability": mastery[skill.id].probability if skill.id in mastery else None,
+                "observations": mastery[skill.id].observations if skill.id in mastery else 0,
+                "due_at": schedule_by_skill[skill.id].due_at if skill.id in schedule_by_skill else None,
+            } for skill in unit_skills],
+            "materials": [{
+                "id": material.id, "name": material.name, "kind": material.kind,
+                "status": material.status, "chunk_count": material.chunk_count,
+            } for material in unit_materials],
+            "has_indexed_material": any(
+                material.status == "ready" and material.chunk_count > 0 for material in unit_materials
+            ),
+        })
+    return {"course": {"id": course.id, "title": course.title, "code": course.code}, "units": result}
+
+
 @router.get("/courses/{course_id}/curriculum")
 async def get_curriculum(
     course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
@@ -383,26 +590,61 @@ async def download_material(
 
 @router.get("/courses/{course_id}/assessments")
 async def list_assessments(
-    course_id: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
+    course_id: str, skill_id: str | None = None, unit_id: str | None = None,
+    student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await enrolled_course(course_id, student, db)
-    assessments = (await db.execute(select(Assessment).where(
+    query = select(Assessment).where(
         Assessment.course_id == course_id, Assessment.status == "published",
-    ).order_by(Assessment.published_at.desc()))).scalars().all()
-    result = []
-    for assessment in assessments:
-        count = await db.scalar(
-            select(func.count(AssessmentQuestion.id))
+    )
+    if skill_id or unit_id:
+        linked = (
+            select(AssessmentQuestion.assessment_id)
             .join(Question, Question.id == AssessmentQuestion.question_id)
-            .where(
-                AssessmentQuestion.assessment_id == assessment.id,
-                Question.status == "published",
-            )
-        ) or 0
-        result.append({"id": assessment.id, "title": assessment.title,
-                       "description": assessment.description, "kind": assessment.kind,
-                       "question_count": count})
-    return result
+            .where(Question.status == "published")
+        )
+        if skill_id:
+            linked = linked.where(Question.skill_id == skill_id)
+        else:
+            linked = linked.join(Skill, Skill.id == Question.skill_id).where(Skill.unit_id == unit_id)
+        query = query.where(Assessment.id.in_(linked))
+    assessments = (await db.execute(
+        query.order_by(Assessment.published_at.desc())
+    )).scalars().all()
+    if not assessments:
+        return []
+    assessment_ids = [assessment.id for assessment in assessments]
+    counts = dict((await db.execute(
+        select(AssessmentQuestion.assessment_id, func.count(AssessmentQuestion.id))
+        .join(Question, Question.id == AssessmentQuestion.question_id)
+        .where(
+            AssessmentQuestion.assessment_id.in_(assessment_ids),
+            Question.status == "published",
+        )
+        .group_by(AssessmentQuestion.assessment_id)
+    )).all())
+    links = (await db.execute(
+        select(AssessmentQuestion.assessment_id, Skill.id, Skill.title)
+        .join(Question, Question.id == AssessmentQuestion.question_id)
+        .outerjoin(Skill, Skill.id == Question.skill_id)
+        .where(
+            AssessmentQuestion.assessment_id.in_(assessment_ids),
+            Question.status == "published",
+        )
+    )).all()
+    skills_by_assessment: dict[str, list[dict]] = {}
+    for assessment_id, linked_skill_id, title in links:
+        if linked_skill_id is None:
+            continue
+        skills = skills_by_assessment.setdefault(assessment_id, [])
+        if not any(item["id"] == linked_skill_id for item in skills):
+            skills.append({"id": linked_skill_id, "title": title})
+    return [{
+        "id": assessment.id, "title": assessment.title,
+        "description": assessment.description, "kind": assessment.kind,
+        "question_count": counts.get(assessment.id, 0),
+        "skills": skills_by_assessment.get(assessment.id, []),
+    } for assessment in assessments]
 
 
 @router.get("/courses/{course_id}/submissions")
@@ -481,7 +723,10 @@ async def assessment_attempt_payload(attempt: AssessmentAttempt, db: AsyncSessio
     answer_map = {response.question_id: response for response in answered}
     return {
         "id": attempt.id, "assessment_id": attempt.assessment_id,
+        "course_id": attempt.course_id,
         "status": attempt.status, "attempt_number": attempt.attempt_number,
+        "score": attempt.score, "possible_score": attempt.possible_score,
+        "submitted_at": attempt.submitted_at,
         "questions": [{
             "id": question.id, "prompt": question.prompt, "question_type": question.question_type,
             "options": question.options, "points": item.points,
@@ -833,6 +1078,31 @@ async def get_tutor_session(
                          for message in messages]}
 
 
+async def tutor_sources(course_id: str, query: str, db: AsyncSession) -> list[dict]:
+    try:
+        vector_rows = await embed_texts([query])
+    except AIProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    vector = vector_rows[0]
+    nearest = (await db.execute(
+        select(MaterialChunk, Material)
+        .join(Material, Material.id == MaterialChunk.material_id)
+        .where(Material.course_id == course_id, Material.status == "ready",
+               MaterialChunk.embedding.is_not(None))
+        .order_by(MaterialChunk.embedding.cosine_distance(vector))
+        .limit(5)
+    )).all()
+    return [{"material_id": material.id, "material_name": material.name,
+             "page_number": chunk.page_number, "chunk_index": chunk.chunk_index,
+             "content": chunk.content} for chunk, material in nearest]
+
+
+def tutor_citations(sources: list[dict]) -> list[dict]:
+    return [{key: source[key] for key in (
+        "material_id", "material_name", "page_number", "chunk_index",
+    )} for source in sources]
+
+
 @router.post("/tutor/sessions/{session_id}/messages", status_code=201)
 async def send_tutor_message(
     session_id: str, data: TutorMessageCreate, student: User = Depends(require_student),
@@ -853,22 +1123,7 @@ async def send_tutor_message(
     await db.commit()
     await db.refresh(user_message)
 
-    try:
-        vector_rows = await embed_texts([data.content])
-    except AIProviderError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    vector = vector_rows[0]
-    nearest = (await db.execute(
-        select(MaterialChunk, Material)
-        .join(Material, Material.id == MaterialChunk.material_id)
-        .where(Material.course_id == session.course_id, Material.status == "ready",
-               MaterialChunk.embedding.is_not(None))
-        .order_by(MaterialChunk.embedding.cosine_distance(vector))
-        .limit(5)
-    )).all()
-    sources = [{"material_id": material.id, "material_name": material.name,
-                "page_number": chunk.page_number, "chunk_index": chunk.chunk_index,
-                "content": chunk.content} for chunk, material in nearest]
+    sources = await tutor_sources(session.course_id, data.content, db)
     history = (await db.execute(select(TutorMessage).where(
         TutorMessage.session_id == session_id,
     ).order_by(TutorMessage.created_at.desc()).limit(10))).scalars().all()
@@ -878,9 +1133,7 @@ async def send_tutor_message(
         reply = await generate_tutor_reply(conversation, skill_name, sources)
     except AIProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    citations = [{key: source[key] for key in (
-        "material_id", "material_name", "page_number", "chunk_index",
-    )} for source in sources]
+    citations = tutor_citations(sources)
     assistant_message = TutorMessage(
         session_id=session_id, role="assistant", content=reply, citations=citations,
         model=settings.ai_chat_model,
@@ -893,6 +1146,57 @@ async def send_tutor_message(
             "id": user_message.id, "role": user_message.role, "content": user_message.content,
             "citations": user_message.citations, "created_at": user_message.created_at,
         },
+        "assistant_message": {
+            "id": assistant_message.id, "role": assistant_message.role,
+            "content": assistant_message.content, "citations": assistant_message.citations,
+            "created_at": assistant_message.created_at,
+        },
+    }
+
+
+@router.post("/tutor/sessions/{session_id}/hint", status_code=201)
+async def request_tutor_hint(
+    session_id: str, data: TutorHintCreate, student: User = Depends(require_student),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    session = await owned_tutor_session(session_id, student, db)
+    if session.status != "active":
+        raise HTTPException(status_code=409, detail="Tutor session is closed")
+    if not settings.ai_configured:
+        raise HTTPException(status_code=503, detail="The AI tutor is not configured")
+    skill_name = ""
+    reference = ""
+    if session.skill_id:
+        row = (await db.execute(select(Skill.title, Skill.description).where(
+            Skill.id == session.skill_id,
+        ))).first()
+        if row:
+            skill_name, reference = row
+    history = (await db.execute(select(TutorMessage).where(
+        TutorMessage.session_id == session_id,
+    ).order_by(TutorMessage.created_at.desc()).limit(8))).scalars().all()
+    conversation = [{"role": message.role, "content": message.content}
+                    for message in reversed(history)]
+    query = " ".join(part for part in (skill_name, reference) if part) or next(
+        (message["content"] for message in reversed(conversation) if message["role"] == "user"),
+        "habilidad del curso",
+    )
+    sources = await tutor_sources(session.course_id, query, db)
+    try:
+        reply = await generate_tutor_hint(conversation, skill_name, reference, sources, data.level)
+    except AIProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    assistant_message = TutorMessage(
+        session_id=session_id, role="assistant", content=reply,
+        citations=tutor_citations(sources), model=settings.ai_chat_model,
+    )
+    db.add(assistant_message)
+    record_event(db, student.id, "tutor.hint.requested", "tutor_session", session_id,
+                 session.course_id)
+    await db.commit()
+    await db.refresh(assistant_message)
+    return {
+        "level": data.level,
         "assistant_message": {
             "id": assistant_message.id, "role": assistant_message.role,
             "content": assistant_message.content, "citations": assistant_message.citations,

@@ -426,6 +426,10 @@ class TutorMessageCreate(BaseModel):
     content: str = Field(min_length=1, max_length=5000)
 
 
+class TutorHintCreate(BaseModel):
+    level: int = Field(ge=0, le=2)
+
+
 class ReflectionCreate(BaseModel):
     body: str = Field(min_length=1, max_length=10000)
     prompt: str = Field(default="", max_length=500)

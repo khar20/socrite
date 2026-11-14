@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useNavigate, useParams } from 'react-router-dom'
 import { BookOpen, ChevronDown, CircleHelp, ClipboardCheck, FileText, FolderOpen, Home,
-  MessageCircle,
+  MessageCircle, Puzzle, Repeat2, Search,
   Layers3, LogOut, Menu, Moon, Settings2, ShieldCheck, Sun, Users, X } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
@@ -9,6 +9,7 @@ import { useAuth } from '../auth-context'
 import { ChartNoAxesColumn } from 'lucide-react'
 import type { Course, PageResult } from '../types'
 import { Badge, LoadingState } from './ui'
+import { CommandPalette } from './CommandPalette'
 
 const sections = [
   { title: 'Docencia', links: [{ to: '', label: 'Panel docente', icon: Home }] },
@@ -30,12 +31,14 @@ const sections = [
 const studentSections = [
   { title: 'Aprendizaje', links: [{ to: '', label: 'Inicio', icon: Home }] },
   { title: 'Mi curso', links: [
-    { to: 'curriculum', label: 'Ruta de aprendizaje', icon: Layers3 },
-    { to: 'materials', label: 'Materiales de clase', icon: FolderOpen },
-    { to: 'assessments', label: 'Práctica y evaluaciones', icon: ClipboardCheck },
+    { to: 'path', label: 'Mi ruta', icon: Layers3 },
+    { to: 'materials', label: 'Materiales', icon: FolderOpen },
     { to: 'tutor', label: 'Tutor socrático', icon: MessageCircle },
-    { to: 'feedback', label: 'Retroalimentación', icon: FileText },
-    { to: 'progress', label: 'Mi progreso', icon: ShieldCheck },
+    { to: 'practice', label: 'Práctica', icon: ClipboardCheck },
+    { to: 'review', label: 'Repaso espaciado', icon: Repeat2 },
+    { to: 'problems', label: 'Problemas', icon: Puzzle },
+    { to: 'progress', label: 'Mi progreso', icon: ChartNoAxesColumn },
+    { to: 'overview', label: 'Curso', icon: BookOpen },
   ] },
 ]
 
@@ -45,6 +48,7 @@ export function AppLayout({ mode = 'teacher' }: { mode?: 'teacher' | 'student' }
   const navigate = useNavigate()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [courseMenu, setCourseMenu] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [theme, setTheme] = useState(() => localStorage.getItem('socrite-theme') || 'light')
   const isTeacher = mode === 'teacher'
   const basePath = isTeacher ? '/teacher' : '/student'
@@ -66,6 +70,27 @@ export function AppLayout({ mode = 'teacher' }: { mode?: 'teacher' | 'student' }
   const activeCourse = courseList.find((course) => course.id === courseId)
     || activeCourseQuery.data || courseList[0]
   const closeMenu = () => setMobileOpen(false)
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setPaletteOpen((value) => !value)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  const paletteItems = [
+    ...navSections.flatMap((section) => section.links.map((link) => ({
+      label: link.label,
+      group: section.title,
+      icon: link.icon,
+      to: link.to ? (activeCourse ? `${basePath}/courses/${activeCourse.id}/${link.to}` : `${basePath}/courses`) : basePath,
+    }))),
+    ...courseList.map((course) => ({ label: course.title, group: 'Cursos', icon: BookOpen, to: `${basePath}/courses/${course.id}` })),
+  ]
 
   function toggleTheme() {
     const next = theme === 'dark' ? 'light' : 'dark'
@@ -118,11 +143,12 @@ export function AppLayout({ mode = 'teacher' }: { mode?: 'teacher' | 'student' }
         <button className="icon-button mobile-menu-button" onClick={() => setMobileOpen(true)} aria-label="Abrir menú"><Menu size={19} /></button>
         <div className="breadcrumb"><span>{isTeacher ? 'Docencia' : 'Aprendizaje'}</span><span aria-hidden="true">/</span><strong>{activeCourse?.title || (isTeacher ? 'Panel docente' : 'Inicio')}</strong></div>
         <div className="topbar-spacer" />
-        <Link className="help-link" to={isTeacher ? '/teacher/activity' : `${basePath}${activeCourse ? `/courses/${activeCourse.id}/progress` : ''}`}><ShieldCheck size={15} /><span>{isTeacher ? 'Actividad del curso' : 'Mi progreso'}</span></Link>
+        <button className="topbar-search" onClick={() => setPaletteOpen(true)}><Search size={15} /><span>Buscar…</span><kbd>Ctrl K</kbd></button>
         <button className="icon-button theme-button" onClick={toggleTheme} aria-label={theme === 'dark' ? 'Usar tema claro' : 'Usar tema oscuro'}>{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button>
       </header>
       <main className="page-content"><Outlet /></main>
     </div>
+    <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
   </div>
 }
 

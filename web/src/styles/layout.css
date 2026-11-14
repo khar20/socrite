@@ -87,3 +87,12 @@
   .breadcrumb span:first-child, .breadcrumb span:nth-child(2) { display: none; }
   .page-header h1 { font-size: 22px; }
 }
+
+.topbar-search { display: inline-flex; align-items: center; gap: 8px; min-width: 190px; height: 34px; padding: 0 10px; border: 1px solid hsl(var(--br)); border-radius: var(--r); color: hsl(var(--mf)); background: hsl(var(--bg)); font-size: 12px; }
+.topbar-search:hover { background: hsl(var(--mu)); }
+.topbar-search span { flex: 1; text-align: start; }
+.topbar-search kbd { padding: 1px 5px; border: 1px solid hsl(var(--br)); border-radius: 4px; font-family: inherit; font-size: 10px; }
+@media (max-width: 760px) {
+  .topbar-search { min-width: 0; }
+  .topbar-search span, .topbar-search kbd { display: none; }
+}
