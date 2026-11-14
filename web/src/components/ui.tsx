@@ -42,8 +42,14 @@ export function Badge({ children, tone = 'neutral' }: { children: ReactNode; ton
   return <span className={`status-badge status-${tone}`}>{children}</span>
 }
 
-export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
-  return <header className="page-header"><div><h1>{title}</h1>{description && <p className="muted-text">{description}</p>}</div>{actions && <div className="header-actions">{actions}</div>}</header>
+export function InfoTip({ label, children }: { label: string; children: ReactNode }) {
+  const id = useId()
+  const [open, setOpen] = useState(false)
+  return <span className="info-tip-wrap"><button type="button" className="info-tip" aria-label={label} aria-describedby={id} aria-expanded={open} onClick={() => setOpen((value) => !value)} onBlur={() => setOpen(false)}><Info size={15} /></button><span role="tooltip" id={id} className={`info-tip-content${open ? ' is-open' : ''}`}>{children}</span></span>
+}
+
+export function PageHeader({ title, description, actions, help }: { title: string; description?: string; actions?: ReactNode; help?: ReactNode }) {
+  return <header className="page-header"><div className="page-heading"><div className="page-title-row"><h1>{title}</h1>{help && <InfoTip label={`Información sobre ${title}`}>{help}</InfoTip>}</div>{description && <p className="muted-text">{description}</p>}</div>{actions && <div className="header-actions">{actions}</div>}</header>
 }
 
 export function EmptyState({ icon: Icon, title, description, action }: { icon: React.ComponentType<{ size?: number }>; title: string; description: string; action?: ReactNode }) {

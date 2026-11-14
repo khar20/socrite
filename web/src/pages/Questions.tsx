@@ -107,7 +107,7 @@ export function QuestionsPage() {
     .flatMap((unit) => unit.skills.map((skill) => ({ ...skill, unitTitle: unit.title })))
 
   return <>
-    <PageHeader title="Banco de preguntas" description="Crea preguntas de práctica y revisa los borradores generados desde tus materiales." actions={<Button onClick={newQuestion}><Plus size={16} />Nueva pregunta</Button>} />
+    <PageHeader title="Banco de preguntas" description="Crea preguntas y revisa borradores generados desde tus materiales." help="Es el catálogo reutilizable del docente, no una actividad para estudiantes. Aprueba aquí las preguntas que luego agregarás a prácticas, evaluaciones o problemas de transferencia." actions={<Button onClick={newQuestion}><Plus size={16} />Nueva pregunta</Button>} />
     {!items.length ? <Card><EmptyState icon={FileQuestion} title="El banco está vacío" description="Escribe una pregunta o genera un borrador a partir de un material ya procesado." action={<Button onClick={newQuestion}><Plus size={15} />Crear pregunta</Button>} /></Card> : <Card>
       <div className="card-heading card-heading-row"><div><h2>Preguntas del curso</h2><p className="muted-text text-small">{items.length} pregunta{items.length === 1 ? '' : 's'} · cada borrador requiere revisión docente.</p></div></div>
       <div className="question-list">{items.map((question) => {

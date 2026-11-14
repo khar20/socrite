@@ -8,7 +8,7 @@ import type { NextActivity, PathData, PracticeAssessment } from './types'
 const KIND_LABELS: Record<string, string> = {
   diagnostic: 'Diagnóstico',
   practice: 'Práctica',
-  quiz: 'Micro-quiz',
+  quiz: 'Evaluación',
   transfer: 'Transferencia',
 }
 
@@ -46,13 +46,18 @@ export function StudentPracticePage() {
   const filtering = Boolean(skillId || unitId)
   const activity = next.data!.activity
   const skills = units.flatMap((unit) => unit.skills.map((skill) => ({ ...skill, unitTitle: unit.title })))
+  const available = assessments.data!.filter((item) => item.kind !== 'transfer' && item.learning_technique !== 'spaced_repetition')
+  const groups = [
+    { title: 'Prácticas', description: 'Ejercita habilidades y recibe evidencia para orientar tu estudio.', items: available.filter((item) => item.kind === 'practice' || item.kind === 'diagnostic') },
+    { title: 'Evaluaciones', description: 'Comprueba lo aprendido en cuestionarios y evaluaciones publicadas.', items: available.filter((item) => item.kind === 'quiz' || (!['practice', 'diagnostic', 'transfer'].includes(item.kind) && item.learning_technique !== 'spaced_repetition')) },
+  ].filter((group) => group.items.length)
 
   function clearFilter() {
     navigate(`/student/courses/${courseId}/practice`)
   }
 
   return <div className="student-view">
-    <PageHeader title="Práctica" description="Recuperación activa: responde sin consultar materiales. Cada respuesta actualiza tu modelo de conocimiento." />
+    <PageHeader title="Prácticas y evaluaciones" description="Responde actividades publicadas para practicar y comprobar lo que sabes." help="Las prácticas y el diagnóstico te ayudan a ejercitar y orientar el estudio; las evaluaciones comprueban el aprendizaje. El repaso espaciado programa recuperaciones breves y los problemas de transferencia te piden aplicar lo aprendido en casos nuevos." />
 
     <div className="practice-note"><Lock size={17} /><div><strong>Sin apuntes.</strong> Si dudas, indícalo: tu nivel de confianza también es evidencia para tu metacognición.</div></div>
 
@@ -92,7 +97,7 @@ export function StudentPracticePage() {
     </div>
 
     <Card>
-      <div className="card-heading"><h2>Banco de práctica por habilidad</h2><p className="muted-text text-small">Elige una habilidad para ver las actividades que la evalúan.</p></div>
+      <div className="card-heading"><h2>Actividades por habilidad</h2><p className="muted-text text-small">Elige una habilidad para filtrar las prácticas y evaluaciones que la trabajan.</p></div>
       <div className="card-content">
         {skills.length ? <div className="topic-chips">{skills.map((skill) => <Link key={skill.id}
           className={`practice-chip${skill.id === skillId ? ' is-active' : ''}`}
@@ -102,15 +107,13 @@ export function StudentPracticePage() {
       </div>
     </Card>
 
-    <Card>
-      <div className="card-heading"><h2>{filtering ? 'Actividades de la selección' : 'Actividades disponibles'}</h2>
-        <p className="muted-text text-small">Cada actividad se apoya en las habilidades que evalúa y actualiza tu dominio estimado.</p></div>
-      <div className="card-content">
-        {assessments.data!.length ? <div className="practice-list">{assessments.data!.map((assessment) => <div className="practice-row" key={assessment.id}>
+    {groups.length ? groups.map((group) => <Card key={group.title}>
+      <div className="card-heading"><h2>{group.title}</h2><p className="muted-text text-small">{group.description}</p></div>
+      <div className="card-content"><div className="practice-list">{group.items.map((assessment) => <div className="practice-row" key={assessment.id}>
           <span className="practice-row-icon"><ClipboardCheck size={18} /></span>
           <div className="practice-row-copy">
             <div className="practice-row-heading">
-              <Badge tone={assessment.learning_technique === 'spaced_repetition' ? 'info' : assessment.kind === 'diagnostic' ? 'info' : assessment.kind === 'transfer' ? 'warning' : 'neutral'}>{assessment.learning_technique === 'spaced_repetition' ? 'Repaso espaciado' : KIND_LABELS[assessment.kind] || 'Práctica'}</Badge>
+              <Badge tone={assessment.kind === 'diagnostic' ? 'info' : assessment.kind === 'quiz' ? 'warning' : 'neutral'}>{KIND_LABELS[assessment.kind] || 'Práctica'}</Badge>
               <Badge>{assessment.question_count} {assessment.question_count === 1 ? 'pregunta' : 'preguntas'}</Badge>
             </div>
             <strong>{assessment.title}</strong>
@@ -118,11 +121,9 @@ export function StudentPracticePage() {
             {!!assessment.skills.length && <div className="topic-chips">{assessment.skills.slice(0, 4).map((skill) => <span className="topic-chip" key={skill.id}><Target size={12} />{skill.title}</span>)}</div>}
           </div>
           <Button disabled={start.isPending} onClick={() => start.mutate(assessment.id)}>{start.isPending ? 'Preparando…' : 'Comenzar'}<ArrowRight size={15} /></Button>
-        </div>)}</div>
-          : <EmptyState icon={Sparkles} title={filtering ? 'Sin actividades para esta selección' : 'No hay actividades disponibles'}
-            description={filtering ? 'Tu docente todavía no ha publicado actividades para esta habilidad o unidad.' : 'Las actividades aparecerán aquí cuando tu docente las publique.'}
-            action={filtering ? <Button variant="outline" onClick={clearFilter}>Ver todas</Button> : undefined} />}
-      </div>
-    </Card>
+        </div>)}</div></div>
+    </Card>) : <Card><EmptyState icon={Sparkles} title={filtering ? 'Sin actividades para esta selección' : 'No hay prácticas ni evaluaciones disponibles'}
+      description={filtering ? 'Tu docente todavía no ha publicado actividades para esta habilidad o unidad.' : 'Las prácticas y evaluaciones aparecerán aquí cuando tu docente las publique. Repaso espaciado y transferencia tienen secciones propias.'}
+      action={filtering ? <Button variant="outline" onClick={clearFilter}>Ver todas</Button> : undefined} /></Card>}
   </div>
 }

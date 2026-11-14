@@ -42,7 +42,7 @@ export function AssessmentsPage() {
       setEditing(null)
       setTitle('')
       setDescription('')
-      toast(editing ? 'Evaluación actualizada.' : 'Evaluación creada como borrador.')
+      toast(editing ? 'Actividad actualizada.' : 'Actividad creada como borrador.')
     },
     onError: (error) => toast(error.message, 'error'),
   })
@@ -84,7 +84,7 @@ export function AssessmentsPage() {
   })
   const publish = useMutation({
     mutationFn: (id: string) => api(`/assessments/${id}/publish`, { method: 'PATCH' }),
-    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ['assessments', courseId] }); toast('Evaluación publicada para estudiantes.') },
+    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ['assessments', courseId] }); toast('Actividad publicada para estudiantes.') },
     onError: (error) => toast(error.message, 'error'),
   })
   if (assessments.isLoading || questions.isLoading) return <LoadingState />
@@ -94,7 +94,7 @@ export function AssessmentsPage() {
   const kinds: { value: Assessment['kind']; label: string }[] = [
     { value: 'diagnostic', label: 'Diagnóstico' },
     { value: 'practice', label: 'Práctica' },
-    { value: 'quiz', label: 'Cuestionario' },
+    { value: 'quiz', label: 'Evaluación' },
     { value: 'transfer', label: 'Transferencia' },
   ]
 
@@ -113,8 +113,8 @@ export function AssessmentsPage() {
   }
 
   return <>
-    <PageHeader title="Evaluaciones" description="Agrupa preguntas publicadas en diagnósticos, prácticas, cuestionarios y actividades de transferencia." actions={<><Button variant="outline" onClick={openGeneration}><Sparkles size={16} />Generar práctica con IA</Button><Button onClick={() => { setEditing(null); setTitle(''); setDescription(''); setInstructions(''); setKind('practice'); setOpen(true) }}><Plus size={16} />Nueva evaluación</Button></>} />
-    {!items.length ? <Card><EmptyState icon={ClipboardCheck} title="Aún no hay evaluaciones" description="Crea una evaluación y agrega preguntas publicadas del banco, o genera una práctica fundamentada con IA." action={<Button onClick={openGeneration}><Sparkles size={15} />Generar práctica</Button>} /></Card> : <div className="assessment-list">{items.map((assessment) => {
+    <PageHeader title="Prácticas y evaluaciones" description="Crea actividades para ejercitar conocimientos y comprobar el aprendizaje." help="Las prácticas sirven para ejercitar y recibir evidencia formativa; las evaluaciones (diagnósticos y cuestionarios) permiten comprobar lo aprendido. Los problemas de transferencia presentan casos nuevos. Todas se componen de preguntas aprobadas del banco y solo aparecen al estudiante cuando se publican." actions={<><Button variant="outline" onClick={openGeneration}><Sparkles size={16} />Generar actividad con IA</Button><Button onClick={() => { setEditing(null); setTitle(''); setDescription(''); setInstructions(''); setKind('practice'); setOpen(true) }}><Plus size={16} />Nueva actividad</Button></>} />
+    {!items.length ? <Card><EmptyState icon={ClipboardCheck} title="Aún no hay actividades" description="Crea una práctica o evaluación con preguntas publicadas del banco, o genera borradores con IA para revisarlos." action={<Button onClick={openGeneration}><Sparkles size={15} />Generar actividad</Button>} /></Card> : <div className="assessment-list">{items.map((assessment) => {
       const attached = questions.data!.filter((question) => assessment.question_ids.includes(question.id))
       const canPublish = attached.length > 0 && attached.every((question) => question.status === 'published')
       const practice = assessment.settings?.practice ? assessment.settings : null
@@ -143,13 +143,13 @@ export function AssessmentsPage() {
       </Card>
     })}</div>}
     {!publishedQuestions.length && <div className="inline-alert alert-info page-note"><ClipboardCheck size={16} /><span>Publica preguntas del banco antes de agregarlas a una evaluación.</span></div>}
-    <Modal open={open} onClose={() => { setOpen(false); setEditing(null) }} title={editing ? 'Editar evaluación' : 'Nueva evaluación'} description="La evaluación queda como borrador hasta que tenga preguntas y la publiques." onSubmit={(event) => { event.preventDefault(); create.mutate() }} submitLabel={editing ? 'Guardar cambios' : 'Crear borrador'} busy={create.isPending}>
+    <Modal open={open} onClose={() => { setOpen(false); setEditing(null) }} title={editing ? 'Editar actividad' : 'Nueva actividad'} description="La actividad queda como borrador hasta que tenga preguntas y la publiques." onSubmit={(event) => { event.preventDefault(); create.mutate() }} submitLabel={editing ? 'Guardar cambios' : 'Crear borrador'} busy={create.isPending}>
       <Field label="Título" required><TextInput autoFocus value={title} onChange={(event) => setTitle(event.target.value.toUpperCase())} required minLength={2} maxLength={200} placeholder="Ej. Diagnóstico de funciones" /></Field>
-      <Field label="Tipo"><Select value={kind} onChange={(event) => setKind(event.target.value as Assessment['kind'])}>{kinds.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
+      <Field label="Tipo" hint="Diagnóstico y práctica sirven para orientar el estudio; evaluación comprueba el aprendizaje; transferencia aplica lo aprendido a casos nuevos."><Select value={kind} onChange={(event) => setKind(event.target.value as Assessment['kind'])}>{kinds.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
       <Field label="Instrucciones"><TextArea rows={3} value={description} onChange={(event) => setDescription(event.target.value)} maxLength={5000} placeholder="Indica cómo prepararse y qué se espera en las respuestas." /></Field>
       {editing && <Field label="Orientaciones de la actividad" hint="Revisa o edita las indicaciones generadas por la IA."><TextArea rows={3} value={instructions} onChange={(event) => setInstructions(event.target.value)} maxLength={5000} /></Field>}
     </Modal>
-    <Modal open={generateOpen} onClose={() => setGenerateOpen(false)} title="Generar práctica con IA" description="Crea una evaluación de práctica fundamentada en un material del curso. Todo queda como borrador." onSubmit={(event) => { event.preventDefault(); generatePractice.mutate() }} submitLabel="Generar borradores" busy={generatePractice.isPending} submitDisabled={!materialId || !selectedTypes.length || !validQuestionCount}>
+    <Modal open={generateOpen} onClose={() => setGenerateOpen(false)} title="Generar actividad con IA" description="Genera borradores basados exclusivamente en el material seleccionado; revísalos antes de publicarlos." onSubmit={(event) => { event.preventDefault(); generatePractice.mutate() }} submitLabel="Generar borradores" busy={generatePractice.isPending} submitDisabled={!materialId || !selectedTypes.length || !validQuestionCount}>
       {configuration.data && !configuration.data.ai_configured && <div className="inline-alert alert-info form-note"><Sparkles size={16} /><span>Configura el proveedor de IA para generar prácticas.</span></div>}
       {!readyMaterials.length && <div className="inline-alert alert-info form-note"><Sparkles size={16} /><span>No hay materiales procesados con texto. Sube y procesa un material antes de generar.</span></div>}
       <Field label="Material de origen" hint="La práctica usará únicamente el texto extraído de este material." required>

@@ -14,13 +14,13 @@ import { CommandPalette } from './CommandPalette'
 const sections = [
   { title: 'Docencia', links: [{ to: '', label: 'Panel docente', icon: Home }] },
   { title: 'Curso', links: [
-    { to: 'curriculum', label: 'Estructura académica', icon: Layers3 },
+    { to: 'curriculum', label: 'Estructura del curso', icon: Layers3 },
     { to: 'materials', label: 'Materiales de clase', icon: FolderOpen },
     { to: 'students', label: 'Estudiantes', icon: Users },
     { to: 'analytics', label: 'Analítica', icon: ChartNoAxesColumn },
     { to: 'reviews', label: 'Revisión', icon: ClipboardCheck },
     { to: 'questions', label: 'Banco de preguntas', icon: FileText },
-    { to: 'assessments', label: 'Evaluaciones', icon: ClipboardCheck },
+    { to: 'assessments', label: 'Prácticas y evaluaciones', icon: ClipboardCheck },
   ] },
   { title: 'Administración', links: [
     { to: 'settings', label: 'Configuración', icon: Settings2 },
@@ -34,9 +34,9 @@ const studentSections = [
     { to: 'path', label: 'Mi ruta', icon: Layers3 },
     { to: 'materials', label: 'Materiales', icon: FolderOpen },
     { to: 'tutor', label: 'Tutor socrático', icon: MessageCircle },
-    { to: 'practice', label: 'Práctica', icon: ClipboardCheck },
+    { to: 'practice', label: 'Prácticas y evaluaciones', icon: ClipboardCheck },
     { to: 'review', label: 'Repaso espaciado', icon: Repeat2 },
-    { to: 'problems', label: 'Problemas', icon: Puzzle },
+    { to: 'problems', label: 'Transferencia', icon: Puzzle },
     { to: 'progress', label: 'Mi progreso', icon: ChartNoAxesColumn },
     { to: 'overview', label: 'Curso', icon: BookOpen },
   ] },

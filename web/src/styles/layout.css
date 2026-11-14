@@ -40,6 +40,12 @@
 .mobile-menu-button, .sidebar-close { display: none !important; }
 .mobile-scrim { display: none; }
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-block-end: 23px; }
+.page-heading { min-width: 0; }
+.page-title-row { display: flex; align-items: center; gap: 8px; }
+.info-tip-wrap { position: relative; display: inline-flex; flex: 0 0 auto; }
+.info-tip { display: inline-grid; place-items: center; width: 25px; height: 25px; padding: 0; border: 1px solid hsl(var(--br)); border-radius: 50%; background: transparent; color: hsl(var(--mf)); cursor: help; }
+.info-tip-content { position: absolute; z-index: 20; inset-block-start: calc(100% + 8px); inset-inline-start: 0; width: min(300px, calc(100vw - 48px)); padding: 10px 12px; border: 1px solid hsl(var(--br)); border-radius: 9px; background: hsl(var(--bg)); color: hsl(var(--fg)); box-shadow: 0 8px 24px hsl(220 25% 10% / .14); font-size: 12px; font-weight: 400; line-height: 1.5; visibility: hidden; opacity: 0; transition: opacity .15s ease; }
+.info-tip-wrap:hover .info-tip-content, .info-tip:focus-visible + .info-tip-content, .info-tip-content.is-open { visibility: visible; opacity: 1; }
 .page-header p { max-width: 690px; margin-block-start: 5px; color: hsl(var(--mf)); font-size: 13px; }
 .header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }

@@ -29,7 +29,7 @@ export function StudentProblemsPage() {
   const items = submissions.data!.items
 
   return <div className="student-view">
-    <PageHeader title="Problemas de transferencia" description="Casos nuevos para aplicar lo aprendido. La nota automática queda pendiente hasta que tu docente la confirme." />
+    <PageHeader title="Transferencia" description="Aplica lo aprendido en casos nuevos. La nota automática queda pendiente hasta que tu docente la confirme." help="Estos problemas presentan situaciones distintas a los ejemplos de práctica para que transfieras conceptos y habilidades. El docente los prepara y publica como actividades abiertas; sus respuestas pueden requerir revisión." />
     {problems.length ? <div className="problem-grid">{problems.map((problem) => <Card key={problem.id}>
       <div className="problem-card">
         <span className="problem-icon"><Puzzle size={20} /></span>

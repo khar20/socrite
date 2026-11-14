@@ -69,7 +69,7 @@ export function StudentReviewPage() {
   const generatedReviews = assessments.data!.filter((item) => item.learning_technique === 'spaced_repetition')
 
   return <div className="student-view">
-    <PageHeader title="Repaso espaciado" description="Recupera la idea antes de mirar tus apuntes. La valoración de tu recuerdo define cuándo volverá a aparecer." />
+    <PageHeader title="Repaso espaciado" description="Recupera la idea antes de mirar tus apuntes. La valoración de tu recuerdo define cuándo volverá a aparecer." help="El repaso espaciado programa preguntas breves según tu recuerdo. Se diferencia de las prácticas y evaluaciones, que completas como actividades publicadas, y de los problemas de transferencia, que aplican lo aprendido en casos nuevos." />
 
     {!!generatedReviews.length && <Card><div className="card-heading"><h2>Actividades de repaso</h2><p className="muted-text text-small">Actividades publicadas por tu docente para recuperar conocimientos entre repasos programados.</p></div><div className="card-content practice-list">{generatedReviews.map((activity) => <div className="practice-row" key={activity.id}><span className="practice-row-icon"><Repeat2 size={18} /></span><div className="practice-row-copy"><strong>{activity.title}</strong><p className="muted-text text-small">{activity.description || `${activity.question_count} preguntas del curso`}</p></div><Button disabled={startAssessment.isPending} onClick={() => startAssessment.mutate(activity.id)}>Comenzar<ArrowRight size={15} /></Button></div>)}</div></Card>}
 

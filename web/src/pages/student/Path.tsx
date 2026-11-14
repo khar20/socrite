@@ -49,6 +49,7 @@ export function StudentPathPage() {
     <PageHeader
       title="Mi ruta de aprendizaje"
       description={`${units.length} unidades · ${units.reduce((total, unit) => total + unit.skills.length, 0)} habilidades. El dominio es una estimación probabilística basada en tus evidencias.`}
+      help="Tu ruta organiza el curso en las mismas unidades, temas y habilidades que preparó tu docente. Desde aquí puedes abrir materiales y saltar a prácticas o problemas vinculados con cada unidad."
     />
     {!units.length ? <Card><EmptyState icon={Layers3} title="La ruta se está preparando" description="Las unidades aparecerán aquí cuando tu docente publique la estructura del curso." /></Card> : units.map((unit, index) => {
       const isOpen = openUnit === unit.id
@@ -107,7 +108,7 @@ function SkillRow({ skill, courseId }: { skill: PathSkill; courseId: string }) {
     </div>
     <div className="skill-row-actions">
       <Link className="button button-outline button-small" to={`/student/courses/${courseId}/tutor?skill_id=${skill.id}`}><MessageCircle size={14} />Tutor</Link>
-      <Link className="button button-outline button-small" to={`/student/courses/${courseId}/practice?skill_id=${skill.id}`}><Target size={14} />Quiz</Link>
+      <Link className="button button-outline button-small" to={`/student/courses/${courseId}/practice?skill_id=${skill.id}`}><Target size={14} />Practicar</Link>
     </div>
   </div>
 }
