@@ -22,6 +22,7 @@ from app.auth import (
 from app.db import get_db
 from app.models import AuthSession, User
 from app.schemas import AccountNamesIn, LoginIn, PasswordUpdate, RegisterIn, UserOut
+from app.services.enrollment import enroll_student, mvp_course
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -41,6 +42,7 @@ async def register(
         raise HTTPException(status_code=403, detail="Este correo no está autorizado para registrarse")
     if role == "student" and not data.student_data_consent:
         raise HTTPException(status_code=422, detail="Debes aceptar el consentimiento informado para registrarte como estudiante")
+    course = await mvp_course(db) if role == "student" else None
     if await db.scalar(select(User.id).where(User.email == email)):
         raise HTTPException(status_code=409, detail="Ya existe una cuenta con este correo")
 
@@ -57,6 +59,8 @@ async def register(
     db.add(user)
     try:
         await db.flush()
+        if course is not None:
+            await enroll_student(db, course, user)
         await create_session(user, request, response, db)
     except IntegrityError as exc:
         await db.rollback()

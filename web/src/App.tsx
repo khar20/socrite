@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './auth-context'
 import { AppLayout, PageLoading } from './components/layout'
 import { AccessDenied, LoginPage } from './pages/Login'
@@ -12,7 +12,7 @@ import { QuestionsPage } from './pages/Questions'
 import { SettingsPage } from './pages/Settings'
 import { ActivityPage } from './pages/Activity'
 import { StudentDashboardPage, StudentCoursePage, StudentMaterialsPage,
-  StudentAttemptPage, StudentProgressPage, StudentJoinPage,
+  StudentAttemptPage, StudentProgressPage,
   StudentTutorPage, StudentFeedbackPage } from './pages/Student'
 import { StudentHomePage } from './pages/student/Home'
 import { StudentPathPage } from './pages/student/Path'
@@ -34,22 +34,12 @@ function ProtectedLayout({ role }: { role: 'teacher' | 'student' }) {
   return <AppLayout mode={role} />
 }
 
-function InvitationRoute() {
-  const { profile, loading } = useAuth()
-  const location = useLocation()
-  if (loading) return <PageLoading />
-  if (!profile) return <Navigate to="/login" state={{ returnTo: location.pathname }} replace />
-  if (profile.role !== 'student') return <AccessDenied />
-  return <StudentJoinPage />
-}
-
 export default function App() {
   const { profile } = useAuth()
   return <Routes>
     <Route path="/consentimiento-informado" element={<ConsentPage />} />
     <Route path="/login" element={profile ? <Navigate to={profile.role === 'student' ? '/student' : '/teacher'} replace /> : <LoginPage />} />
     <Route path="/access-denied" element={<AccessDenied />} />
-    <Route path="/join/:token" element={<InvitationRoute />} />
     <Route path="/teacher" element={<ProtectedLayout role="teacher" />}>
       <Route index element={<DashboardPage />} />
       <Route path="courses" element={<CoursesPage />} />

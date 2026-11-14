@@ -271,26 +271,6 @@ class Submission(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class CourseInvitation(Base):
-    __tablename__ = "course_invitations"
-    __table_args__ = (
-        CheckConstraint("status IN ('pending', 'accepted', 'revoked', 'expired')", name="ck_course_invitations_status"),
-        Index("uq_course_invitations_pending", "course_id", "email", unique=True,
-              postgresql_where=text("status = 'pending'")),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    course_id: Mapped[str] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), index=True)
-    email: Mapped[str] = mapped_column(String(320))
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
-    status: Mapped[str] = mapped_column(String(20), default="pending")
-    invited_by: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
-    accepted_by: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
 class Assessment(Base):
     __tablename__ = "assessments"
     __table_args__ = (

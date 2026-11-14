@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowRight, BookOpen, Check, CircleHelp, ClipboardCheck, FileText, Gauge, Layers3, Lightbulb, LoaderCircle, Lock, MessageCircle, Repeat2, Send, Target, Users } from 'lucide-react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { ArrowRight, BookOpen, Check, CircleHelp, ClipboardCheck, FileText, Gauge, Layers3, Lightbulb, LoaderCircle, Lock, MessageCircle, Repeat2, Send, Target } from 'lucide-react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { api, jsonBody } from '../api'
 import { ProgressRing } from '../components/ProgressRing'
 import type { Course, PageResult } from '../types'
@@ -69,22 +69,10 @@ export function StudentDashboardPage() {
     <Card className="student-courses-card"><div className="card-heading"><h2>Tus cursos</h2><p className="muted-text text-small">Elige un curso para continuar aprendiendo.</p></div>
       <div className="card-content student-course-list">{courses.data!.total ? list.map((course) => <Link className="student-course-row" to={`/student/courses/${course.id}`} key={course.id}>
         <span className="course-row-icon"><BookOpen size={19} /></span><span className="course-row-copy"><strong>{course.title}</strong><small>{course.code || 'Sin código'} · {course.unit_count} unidades · {course.material_count} materiales</small></span><Badge tone={course.status === 'active' ? 'success' : 'neutral'}>{course.status === 'active' ? 'Activo' : 'En preparación'}</Badge><ArrowRight size={16} />
-      </Link>) : <EmptyState icon={BookOpen} title="Aún no tienes cursos" description="Pide a tu docente un enlace de invitación para unirte a un curso." />}</div>
+      </Link>) : <EmptyState icon={BookOpen} title="Aún no tienes cursos" description="Tu curso aparecerá aquí automáticamente después de crear una cuenta con un correo autorizado." />}</div>
       <div className="card-content"><PaginationControls total={courses.data!.total} limit={limit} offset={offset} onChange={setOffset} /></div>
     </Card>
   </>
-}
-
-export function StudentJoinPage() {
-  const { token = '' } = useParams()
-  const navigate = useNavigate()
-  const [error, setError] = useState('')
-  const join = useMutation({
-    mutationFn: () => api<{ course_id: string }>(`/student/invitations/${token}/accept`, { method: 'POST' }),
-    onSuccess: (result) => navigate(`/student/courses/${result.course_id}`, { replace: true }),
-    onError: (reason) => setError(reason.message),
-  })
-  return <main className="access-denied"><div className="empty-icon"><Users size={22} /></div><h1>Invitación a un curso</h1><p>Confirma tu cuenta para unirte al curso. El enlace solo puede usarse con el correo invitado.</p>{error && <div className="inline-alert alert-error" role="alert">{error}</div>}<div className="access-actions"><Button disabled={join.isPending || !token} onClick={() => join.mutate()}>{join.isPending ? 'Uniéndote…' : 'Unirme al curso'}</Button><span className="muted-text text-small">¿No tienes cuenta? <Link className="text-link" to="/login">Inicia sesión o regístrate</Link></span></div></main>
 }
 
 export function StudentCoursePage() {

@@ -1,6 +1,4 @@
-import hashlib
-import secrets
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import case, func, select
@@ -16,7 +14,6 @@ from app.models import (
     AssessmentQuestion,
     AuditEvent,
     Course,
-    CourseInvitation,
     CourseMember,
     LearningEvidenceEvent,
     Material,
@@ -25,7 +22,6 @@ from app.models import (
     ReviewSchedule,
     Skill,
     SpacedReviewEvent,
-    StudentAllowlist,
     StudentSkillMastery,
     Submission,
     Topic,
@@ -37,7 +33,6 @@ from app.schemas import (
     AssessmentCreate,
     AssessmentUpdate,
     AssessmentQuestionIn,
-    CourseInviteCreate,
     QuestionCreate,
     QuestionUpdate,
     SubmissionReview,
@@ -110,13 +105,6 @@ async def students(
             summary["skills"].append({"id": skill.id, "name": skill.title, "unit": unit.title,
                                       "probability": mastery.probability,
                                       "observations": mastery.observations})
-    invites = (await db.execute(
-        select(CourseInvitation).where(
-            CourseInvitation.course_id == course_id,
-            CourseInvitation.status == "pending",
-            CourseInvitation.expires_at > datetime.now(UTC),
-        ).order_by(CourseInvitation.created_at.desc())
-    )).scalars().all()
     return {
         "students": [{
             "id": member.id, "name": profile.full_name, "email": profile.email,
@@ -127,8 +115,6 @@ async def students(
             "evidence_count": mastery_by_student.get(profile.id, {}).get("count", 0),
             "skills": mastery_by_student.get(profile.id, {}).get("skills", []),
         } for member, profile in members],
-        "invitations": [{"id": invite.id, "email": invite.email, "expires_at": invite.expires_at}
-                        for invite in invites],
         "pagination": {"total": total_students, "limit": limit, "offset": offset},
     }
 
@@ -276,72 +262,6 @@ async def course_analytics(
             "overdue_reviews": overdue_reviews,
         },
     }
-
-
-@router.post("/courses/{course_id}/invitations", status_code=201)
-async def create_invitation(
-    course_id: str, data: CourseInviteCreate, teacher: User = Depends(require_teacher),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    course = await owned_course(course_id, teacher, db)
-    if course.status != "active":
-        raise HTTPException(status_code=409, detail="Activate the course before inviting students")
-    email = data.email.strip().casefold()
-    if email in settings.admin_email_set or email in settings.teacher_email_set:
-        raise HTTPException(status_code=422, detail="A teacher account cannot be invited as a student")
-    if not await db.scalar(select(StudentAllowlist.id).where(StudentAllowlist.email == email)):
-        raise HTTPException(status_code=409, detail="Ask an administrator to authorize this student email first")
-    existing_profile = await db.scalar(select(User).where(User.email == email))
-    if existing_profile and await db.scalar(select(CourseMember.id).where(
-        CourseMember.course_id == course_id,
-        CourseMember.profile_id == existing_profile.id,
-        CourseMember.role == "student",
-    )):
-        raise HTTPException(status_code=409, detail="This student is already enrolled")
-    existing_invitation = await db.scalar(
-        select(CourseInvitation).where(
-            CourseInvitation.course_id == course_id,
-            CourseInvitation.email == email,
-            CourseInvitation.status == "pending",
-        ).with_for_update()
-    )
-    if existing_invitation:
-        existing_invitation.status = "revoked"
-    token = secrets.token_urlsafe(32)
-    invitation = CourseInvitation(
-        course_id=course_id,
-        email=email,
-        token_hash=hashlib.sha256(token.encode()).hexdigest(),
-        invited_by=teacher.id,
-        expires_at=datetime.now(UTC) + timedelta(days=7),
-    )
-    db.add(invitation)
-    await db.flush()
-    record_event(db, teacher.id, "student.invited", "invitation", invitation.id, course_id)
-    try:
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(status_code=409, detail="An invitation for this email is already pending") from exc
-    return {"id": invitation.id, "email": email, "token": token, "expires_at": invitation.expires_at}
-
-
-@router.delete("/invitations/{invitation_id}", status_code=204)
-async def revoke_invitation(
-    invitation_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
-) -> Response:
-    result = await db.execute(select(CourseInvitation).join(Course).where(
-        CourseInvitation.id == invitation_id, Course.owner_id == teacher.id,
-    ))
-    invitation = result.scalar_one_or_none()
-    if invitation is None:
-        raise HTTPException(status_code=404, detail="Invitation not found")
-    if invitation.status == "pending":
-        invitation.status = "revoked"
-        record_event(db, teacher.id, "student.invitation.revoked", "invitation", invitation.id,
-                     invitation.course_id)
-        await db.commit()
-    return Response(status_code=204)
 
 
 @router.get("/courses/{course_id}/reviews")

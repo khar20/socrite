@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { BookOpen, Eye, EyeOff, Lightbulb, LockKeyhole, Mail } from 'lucide-react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { api, jsonBody } from '../api'
 import { useAuth } from '../auth-context'
 import type { User } from '../types'
@@ -12,7 +12,6 @@ type Mode = 'sign-in' | 'sign-up'
 export function LoginPage() {
   const { refresh, error: authError } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation()
   const [mode, setMode] = useState<Mode>('sign-in')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -28,11 +27,6 @@ export function LoginPage() {
   async function continueToApp() {
     const user = await refresh()
     if (!user) throw new Error('No se pudo verificar la sesión.')
-    const returnTo = (location.state as { returnTo?: string } | null)?.returnTo
-    if (returnTo?.startsWith('/join/') && user.role === 'student') {
-      navigate(returnTo, { replace: true })
-      return
-    }
     navigate(user.role === 'student' ? '/student' : '/teacher', { replace: true })
   }
 

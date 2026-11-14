@@ -1,4 +1,3 @@
-import hashlib
 import math
 from datetime import UTC, date, datetime, timedelta
 
@@ -21,7 +20,6 @@ from app.models import (
     AssessmentAttempt,
     AssessmentQuestion,
     Course,
-    CourseInvitation,
     CourseMember,
     LearningEvidenceEvent,
     LearningReflection,
@@ -122,45 +120,6 @@ async def list_courses(
     return {"items": result, "total": total, "limit": limit, "offset": offset,
             "summary": {"course_count": total, "active_course_count": active_courses,
                          "material_count": available_materials}}
-
-
-@router.post("/invitations/{token}/accept")
-async def accept_invitation(
-    token: str, student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
-) -> dict:
-    if len(token) > 128:
-        raise HTTPException(status_code=404, detail="Invitation not found")
-    digest = hashlib.sha256(token.encode()).hexdigest()
-    invitation = await db.scalar(select(CourseInvitation).where(
-        CourseInvitation.token_hash == digest,
-    ).with_for_update())
-    if invitation is None:
-        raise HTTPException(status_code=404, detail="Invitation not found or already used")
-    if invitation.status == "accepted" and invitation.accepted_by == student.id:
-        return {"course_id": invitation.course_id}
-    if invitation.status != "pending":
-        raise HTTPException(status_code=404, detail="Invitation not found or already used")
-    if invitation.expires_at <= datetime.now(UTC):
-        invitation.status = "expired"
-        await db.commit()
-        raise HTTPException(status_code=410, detail="Invitation has expired")
-    if invitation.email.casefold() != student.email.casefold():
-        raise HTTPException(status_code=403, detail="Sign in with the invited email address")
-    course = await db.get(Course, invitation.course_id)
-    if course is None or course.status != "active":
-        raise HTTPException(status_code=409, detail="The course is not accepting students yet")
-    membership = await db.scalar(select(CourseMember).where(
-        CourseMember.course_id == invitation.course_id,
-        CourseMember.profile_id == student.id,
-    ))
-    if membership is None:
-        db.add(CourseMember(course_id=invitation.course_id, profile_id=student.id, role="student"))
-    invitation.status = "accepted"
-    invitation.accepted_by = student.id
-    invitation.accepted_at = datetime.now(UTC)
-    record_event(db, student.id, "student.enrolled", "course", invitation.course_id, invitation.course_id)
-    await db.commit()
-    return {"course_id": invitation.course_id}
 
 
 @router.get("/courses/{course_id}")

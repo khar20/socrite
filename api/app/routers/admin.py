@@ -9,6 +9,7 @@ from app.db import get_db
 from app.models import AuthSession, StudentAllowlist, User
 from app.schemas import StudentAllowlistCreate, StudentAllowlistOut, UserActiveUpdate
 from app.services.audit import record_event
+from app.services.enrollment import enroll_student, mvp_course
 
 router = APIRouter(prefix="/admin", tags=["administration"])
 
@@ -53,6 +54,9 @@ async def add_student_email(
     db.add(entry)
     if user:
         user.is_active = True
+        course = await mvp_course(db, required=False)
+        if course:
+            await enroll_student(db, course, user, actor_id=admin.id)
     await db.flush()
     record_event(db, admin.id, "admin.student_allowlist.added", "student_allowlist", entry.id,
                  details={"account_registered": user is not None})

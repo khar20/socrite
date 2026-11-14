@@ -7,6 +7,7 @@ from app.db import get_db
 from app.models import Course, CourseMember, CourseSettings, Material, Submission, Unit, User
 from app.schemas import CourseCreate, CourseOut, CourseSettingsIn, CourseSettingsOut, CourseUpdate
 from app.services.audit import record_event
+from app.services.enrollment import enroll_authorized_students
 
 router = APIRouter(tags=["courses"])
 
@@ -61,6 +62,7 @@ async def create_course(
     db.add(course)
     await db.flush()
     db.add(CourseSettings(course_id=course.id))
+    await enroll_authorized_students(db, course, actor_id=teacher.id)
     record_event(db, teacher.id, "course.created", "course", course.id, course.id)
     await db.commit()
     await db.refresh(course)
@@ -90,6 +92,8 @@ async def update_course(
     course = await owned_course(course_id, teacher, db)
     for key, value in data.model_dump().items():
         setattr(course, key, value)
+    if course.status != "archived":
+        await enroll_authorized_students(db, course, actor_id=teacher.id)
     record_event(db, teacher.id, "course.updated", "course", course.id, course.id)
     await db.commit()
     await db.refresh(course)

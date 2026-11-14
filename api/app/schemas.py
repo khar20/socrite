@@ -269,10 +269,6 @@ class SubmissionReview(BaseModel):
     teacher_comment: str = Field(default="", max_length=5000)
 
 
-class CourseInviteCreate(BaseModel):
-    email: str = Field(pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$", max_length=320)
-
-
 class AssessmentCreate(BaseModel):
     title: str = Field(min_length=2, max_length=200)
     description: str = Field(default="", max_length=5000)
