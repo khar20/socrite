@@ -206,7 +206,11 @@ async def next_activity(
         select(Assessment, Question.skill_id, Question.irt_difficulty, Question.irt_discrimination)
         .join(AssessmentQuestion, AssessmentQuestion.assessment_id == Assessment.id)
         .join(Question, Question.id == AssessmentQuestion.question_id)
-        .where(Assessment.course_id == course_id, Assessment.status == "published")
+        .where(
+            Assessment.course_id == course_id,
+            Assessment.status == "published",
+            Question.status == "published",
+        )
     )).all()
     attempts = (await db.execute(
         select(AssessmentAttempt.assessment_id, func.max(AssessmentAttempt.submitted_at))
@@ -387,8 +391,14 @@ async def list_assessments(
     ).order_by(Assessment.published_at.desc()))).scalars().all()
     result = []
     for assessment in assessments:
-        count = await db.scalar(select(func.count(AssessmentQuestion.id)).where(
-            AssessmentQuestion.assessment_id == assessment.id)) or 0
+        count = await db.scalar(
+            select(func.count(AssessmentQuestion.id))
+            .join(Question, Question.id == AssessmentQuestion.question_id)
+            .where(
+                AssessmentQuestion.assessment_id == assessment.id,
+                Question.status == "published",
+            )
+        ) or 0
         result.append({"id": assessment.id, "title": assessment.title,
                        "description": assessment.description, "kind": assessment.kind,
                        "question_count": count})
@@ -459,7 +469,10 @@ async def assessment_attempt_payload(attempt: AssessmentAttempt, db: AsyncSessio
     items = (await db.execute(
         select(AssessmentQuestion, Question)
         .join(Question, Question.id == AssessmentQuestion.question_id)
-        .where(AssessmentQuestion.assessment_id == attempt.assessment_id)
+        .where(
+            AssessmentQuestion.assessment_id == attempt.assessment_id,
+            Question.status == "published",
+        )
         .order_by(AssessmentQuestion.position)
     )).all()
     answered = (await db.execute(select(QuestionAttempt).where(
@@ -490,7 +503,11 @@ async def answer_question(
     result = await db.execute(
         select(AssessmentQuestion, Question)
         .join(Question, Question.id == AssessmentQuestion.question_id)
-        .where(AssessmentQuestion.assessment_id == attempt.assessment_id, Question.id == question_id)
+        .where(
+            AssessmentQuestion.assessment_id == attempt.assessment_id,
+            Question.id == question_id,
+            Question.status == "published",
+        )
     )
     row = result.one_or_none()
     if row is None:
@@ -580,8 +597,14 @@ async def submit_assessment(
     if attempt.status != "in_progress":
         return {"id": attempt.id, "status": attempt.status, "score": attempt.score,
                 "possible_score": attempt.possible_score}
-    items = (await db.execute(select(AssessmentQuestion).where(
-        AssessmentQuestion.assessment_id == attempt.assessment_id))).scalars().all()
+    items = (await db.execute(
+        select(AssessmentQuestion)
+        .join(Question, Question.id == AssessmentQuestion.question_id)
+        .where(
+            AssessmentQuestion.assessment_id == attempt.assessment_id,
+            Question.status == "published",
+        )
+    )).scalars().all()
     responses = (await db.execute(select(QuestionAttempt).where(
         QuestionAttempt.assessment_attempt_id == attempt.id))).scalars().all()
     if len(responses) != len(items):

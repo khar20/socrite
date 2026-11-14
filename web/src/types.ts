@@ -67,6 +67,14 @@ export type DashboardData = {
   recent_activity: { id: string; action: string; entity_type: string; created_at: string }[]
 }
 
+export type SourceRef = {
+  material_id: string
+  material_name: string
+  page_number: number | null
+  chunk_index: number
+  excerpt: string
+}
+
 export type Question = {
   id: string
   prompt: string
@@ -78,8 +86,29 @@ export type Question = {
   rubric: { criterion: string }[]
   irt_difficulty?: number | null
   irt_discrimination?: number | null
+  source_refs?: SourceRef[]
   status: 'draft' | 'published' | 'archived'
   created_at?: string
+}
+
+export type AssessmentSettings = {
+  practice?: boolean
+  theme?: string
+  instructions?: string
+  question_count?: number
+  question_types?: string[]
+  grounded_only?: boolean
+  review_required?: boolean
+  attempts_before_solution?: number
+  generated?: boolean
+  generation?: {
+    model?: string
+    material_ids?: string[]
+    material_name?: string
+    chunk_count?: number
+    focus?: string
+    generated_at?: string
+  }
 }
 
 export type Assessment = {
@@ -88,9 +117,12 @@ export type Assessment = {
   description: string
   kind: 'diagnostic' | 'practice' | 'quiz' | 'transfer'
   status: 'draft' | 'published' | 'archived'
+  settings?: AssessmentSettings
   question_ids: string[]
   created_at?: string
 }
+
+export type GeneratedPractice = Assessment & { questions: Question[] }
 
 export type Submission = {
   id: string

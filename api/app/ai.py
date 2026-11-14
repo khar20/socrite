@@ -117,6 +117,78 @@ async def generate_question(context: str) -> str:
     return prompt
 
 
+async def generate_practice_assessment(
+    course_context: str,
+    theme: str,
+    sources: str,
+    question_count: int,
+    question_types: list[str],
+    focus: str = "",
+) -> dict:
+    type_guidance = []
+    if "multiple_choice" in question_types:
+        type_guidance.append(
+            "multiple_choice: cuatro opciones plausibles y una sola correcta; "
+            "answer_key es el índice entero de la opción correcta (empieza en 0); rubric vacía."
+        )
+    if "open" in question_types:
+        type_guidance.append(
+            "open: sin opciones ni answer_key; incluye una rúbrica de 2 a 4 criterios observables."
+        )
+    system = (
+        "Eres un docente universitario que diseña evaluaciones de práctica en español. "
+        "Trabaja exclusivamente con las FUENTES numeradas que recibirás. No uses conocimiento externo, "
+        "suposiciones ni contenido inventado. Si una pregunta no puede sustentarse en las fuentes, no la incluyas. "
+        "No inventes cifras, dosis, tiempos, porcentajes, nombres ni procedimientos que no aparezcan textualmente. "
+        "Cada pregunta debe ser autónoma y comprensible sin leer las fuentes. "
+        "Devuelve únicamente un objeto JSON válido, sin texto adicional ni bloques de código."
+    )
+    user = (
+        f"CONTEXTO DEL CURSO:\n{course_context[:6000]}\n\n"
+        f"TEMA DE LA PRÁCTICA: {theme}\n"
+        f"ENFOQUE ADICIONAL: {focus.strip() or 'ninguno'}\n"
+        f"CANTIDAD DE PREGUNTAS: {question_count}\n"
+        f"TIPOS PERMITIDOS: {', '.join(question_types)}\n\n"
+        f"REGLAS DE FORMATO:\n- {'; '.join(type_guidance)}\n"
+        "- Cada pregunta debe incluir source_ids con los identificadores [S1], [S2], etc. que la sustentan.\n"
+        "- Usa solamente identificadores de fuente incluidos en este mensaje.\n"
+        "- No menciones los identificadores dentro del enunciado.\n"
+        "- Devuelve exactamente esta estructura JSON: "
+        '{"title": "...", "description": "...", "instructions": "...", '
+        '"questions": [{"prompt": "...", "question_type": "multiple_choice|open", '
+        '"options": ["..."], "answer_key": 0, "rubric": ["..."], "source_ids": ["S1"]}]}\n\n'
+        f"FUENTES:\n{sources}"
+    )
+    data = await request_ai("chat/completions", {
+        "model": settings.ai_chat_model,
+        "temperature": 0.2,
+        "max_tokens": 4096,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    })
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (IndexError, KeyError, TypeError) as exc:
+        raise AIProviderError("The AI provider returned an invalid assessment response") from exc
+    if not isinstance(content, str):
+        raise AIProviderError("The AI provider returned an invalid assessment response")
+    text = content.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3]
+    try:
+        result = json.loads(text.strip())
+    except ValueError as exc:
+        raise AIProviderError("The AI provider returned malformed assessment content") from exc
+    if not isinstance(result, dict):
+        raise AIProviderError("The AI provider returned an invalid assessment response")
+    return result
+
+
 async def evaluate_open_response(prompt: str, response: str, rubric: list[dict]) -> tuple[int, str]:
     criteria = "\n".join(f"- {item['criterion']}" for item in rubric)
     data = await request_ai("chat/completions", {

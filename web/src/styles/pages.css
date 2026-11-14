@@ -168,6 +168,13 @@
 .question-copy small { display: block; margin-block-start: 3px; color: hsl(var(--mf)); font-size: 10px; }
 .question-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
 .form-note { margin-block: 4px 0; }
+.choice-row { display: flex; flex-wrap: wrap; gap: 16px; padding-block: 4px; }
+.choice-option { display: flex; align-items: center; gap: 7px; font-size: 12px; cursor: pointer; }
+.question-sources { margin-block-start: 6px; color: hsl(var(--mf)); font-size: 10px; }
+.question-sources summary { cursor: pointer; font-weight: 600; }
+.question-sources ul { display: flex; flex-direction: column; gap: 6px; margin-block-start: 6px; padding-inline-start: 16px; }
+.question-sources li { line-height: 1.5; }
+.question-sources li p { margin-block-start: 2px; color: hsl(var(--mf)); font-size: 10px; }
 .settings-form { padding-block-start: 15px; }
 .setting-toggle { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 61px; padding-block: 9px; border-block-end: 1px solid hsl(var(--br)); cursor: pointer; }
 .setting-toggle > span:first-child { display: flex; flex: 1; flex-direction: column; gap: 3px; }
@@ -277,6 +284,7 @@
 .assessment-copy strong { font-size: 12px; }
 .assessment-copy p { margin-block-start: 3px; color: hsl(var(--mf)); font-size: 11px; }
 .assessment-copy small { display: block; margin-block-start: 5px; color: hsl(var(--mf)); font-size: 10px; }
+.assessment-copy .assessment-instructions { margin-block-start: 6px; color: hsl(var(--mf)); font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; }
 .attempt-progress { max-width: 760px; margin: 0 auto 12px; }
 .attempt-card { max-width: 760px; margin-inline: auto; }
 .attempt-card h2 { margin-block: 14px 18px; font-size: 19px; line-height: 1.5; }

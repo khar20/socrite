@@ -432,6 +432,7 @@ async def list_assessments(
             AssessmentQuestion.assessment_id == assessment.id).order_by(AssessmentQuestion.position))).scalars().all()
         result.append({"id": assessment.id, "title": assessment.title, "description": assessment.description,
                        "kind": assessment.kind, "status": assessment.status,
+                       "settings": assessment.settings,
                        "question_ids": [item.question_id for item in items],
                        "created_at": assessment.created_at})
     return result
@@ -450,7 +451,8 @@ async def create_assessment(
     await db.flush()
     record_event(db, teacher.id, "assessment.created", "assessment", assessment.id, course_id)
     await db.commit()
-    return {"id": assessment.id, **data.model_dump(), "status": assessment.status, "question_ids": []}
+    return {"id": assessment.id, **data.model_dump(), "status": assessment.status,
+            "settings": assessment.settings, "question_ids": []}
 
 
 @router.put("/assessments/{assessment_id}/questions/{question_id}")
@@ -523,6 +525,16 @@ async def publish_assessment(
     )) or 0
     if not count:
         raise HTTPException(status_code=409, detail="Add at least one question before publishing")
+    unpublished = await db.scalar(
+        select(func.count(AssessmentQuestion.id))
+        .join(Question, Question.id == AssessmentQuestion.question_id)
+        .where(
+            AssessmentQuestion.assessment_id == assessment.id,
+            Question.status != "published",
+        )
+    ) or 0
+    if unpublished:
+        raise HTTPException(status_code=409, detail="Publish all attached questions before publishing the assessment")
     assessment.status = "published"
     assessment.published_at = datetime.now(UTC)
     record_event(db, teacher.id, "assessment.published", "assessment", assessment.id,
@@ -542,6 +554,7 @@ async def questions(
              "skill_id": q.skill_id, "options": q.options, "answer_key": q.answer_key,
              "rubric": q.rubric, "irt_difficulty": q.irt_difficulty,
              "irt_discrimination": q.irt_discrimination,
+             "source_refs": q.source_refs,
              "status": q.status, "created_at": q.created_at}
             for q in result.scalars().all()]
 

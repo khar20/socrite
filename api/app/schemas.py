@@ -284,6 +284,129 @@ class AssessmentCreate(BaseModel):
         return uppercase_required_name(value)
 
 
+class PracticeGenerationIn(BaseModel):
+    material_id: str = Field(min_length=1, max_length=36)
+    unit_id: str | None = Field(default=None, max_length=36)
+    question_count: int = Field(default=6, ge=1, le=12)
+    question_types: list[str] = Field(
+        default_factory=lambda: ["multiple_choice", "open"], min_length=1, max_length=2,
+    )
+    focus: str = Field(default="", max_length=500)
+
+    @field_validator("question_types")
+    @classmethod
+    def validate_types(cls, value: list[str]) -> list[str]:
+        allowed = {"multiple_choice", "open"}
+        unique = []
+        for item in value:
+            if item not in allowed:
+                raise ValueError("Question types must be multiple_choice or open")
+            if item not in unique:
+                unique.append(item)
+        if not unique:
+            raise ValueError("Choose at least one question type")
+        return unique
+
+
+class GeneratedQuestion(BaseModel):
+    prompt: str = Field(min_length=5, max_length=10000)
+    question_type: str = Field(pattern="^(open|multiple_choice)$")
+    options: list[str] | None = Field(default=None, max_length=8)
+    answer_key: int | None = None
+    rubric: list[str] = Field(default_factory=list, max_length=30)
+    source_ids: list[str] = Field(min_length=1, max_length=8)
+
+    @field_validator("question_type", mode="before")
+    @classmethod
+    def normalize_type(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+            if normalized in {"mc", "multiple_choice", "multiplechoice", "opcion_multiple", "opción_múltiple"}:
+                return "multiple_choice"
+            if normalized in {"open", "abierta", "respuesta_abierta"}:
+                return "open"
+        return value
+
+    @field_validator("options", mode="before")
+    @classmethod
+    def normalize_options(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            raise ValueError("Options must be a list")  # noqa: TRY004
+        options = [str(item).strip() for item in value if str(item).strip()]
+        return options or None
+
+    @field_validator("answer_key", mode="before")
+    @classmethod
+    def normalize_answer_key(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            text = value.strip().upper()
+            if text.isdigit():
+                return int(text)
+            if len(text) == 1 and text in "ABCDEFGH":
+                return ord(text) - ord("A")
+        return value
+
+    @field_validator("rubric", mode="before")
+    @classmethod
+    def normalize_rubric(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("Rubric must be a list")  # noqa: TRY004
+        criteria = []
+        for item in value:
+            if isinstance(item, str):
+                text = item.strip()
+            elif isinstance(item, dict):
+                text = str(item.get("criterion", "")).strip()
+            else:
+                text = ""
+            if text:
+                criteria.append(text)
+        return criteria
+
+    @field_validator("source_ids", mode="before")
+    @classmethod
+    def normalize_source_ids(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list):
+            raise ValueError("Source references must be a list")  # noqa: TRY004
+        normalized = []
+        for item in value:
+            text = str(item).strip().upper().strip("[]")
+            if text.isdigit():
+                text = f"S{text}"
+            if text:
+                normalized.append(text)
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_format(self) -> "GeneratedQuestion":
+        if self.question_type == "multiple_choice":
+            if not self.options or len(self.options) < 2:
+                raise ValueError("Multiple-choice questions require at least two options")
+            if not isinstance(self.answer_key, int) or isinstance(self.answer_key, bool):
+                raise ValueError("The answer key must be the index of a valid option")
+            if not 0 <= self.answer_key < len(self.options):
+                raise ValueError("The answer key must be the index of a valid option")
+        else:
+            self.options = None
+            self.answer_key = None
+            if not self.rubric:
+                raise ValueError("Open questions require at least one review criterion")
+        return self
+
+
+class GeneratedPracticeAssessment(BaseModel):
+    title: str = Field(default="", max_length=200)
+    description: str = Field(default="", max_length=5000)
+    instructions: str = Field(default="", max_length=5000)
+    questions: list[GeneratedQuestion] = Field(min_length=1, max_length=12)
+
+
 class AssessmentQuestionIn(BaseModel):
     question_id: str
     position: int = Field(default=0, ge=0)
