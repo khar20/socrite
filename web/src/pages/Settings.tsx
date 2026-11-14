@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Database, HardDrive, Save, Settings2, Sparkles } from 'lucide-react'
-import { useParams } from 'react-router-dom'
+import { Check, ClipboardCheck, Database, FileQuestion, HardDrive, Save, Settings2, Sparkles } from 'lucide-react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, jsonBody } from '../api'
 import type { Configuration, Course } from '../types'
 import { Badge, Button, Card, ErrorState, Field, LoadingState, PageHeader, Select, TextArea, TextInput, useToast } from '../components/ui'
@@ -10,6 +10,7 @@ type CourseSettings = { course_id: string; socratic_mode: boolean; human_review_
 
 export function SettingsPage() {
   const { courseId = '' } = useParams()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const toast = useToast()
   const courseQuery = useQuery({ queryKey: ['course', courseId], queryFn: () => api<Course>(`/courses/${courseId}`) })
@@ -17,6 +18,7 @@ export function SettingsPage() {
   const configQuery = useQuery({ queryKey: ['configuration'], queryFn: () => api<Configuration>('/configuration') })
   const [course, setCourse] = useState({ title: '', code: '', description: '', credits: 0, academic_period: '', status: 'draft' })
   const [settings, setSettings] = useState({ socratic_mode: true, human_review_required: true, attempts_before_solution: 3 })
+  const [generation, setGeneration] = useState({ evaluation_count: 2, practice_count: 2, question_count: 6 })
   useEffect(() => {
     if (courseQuery.data) setCourse({ title: courseQuery.data.title, code: courseQuery.data.code, description: courseQuery.data.description, credits: courseQuery.data.credits, academic_period: courseQuery.data.academic_period, status: courseQuery.data.status })
   }, [courseQuery.data])
@@ -33,12 +35,26 @@ export function SettingsPage() {
     onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ['course-settings', courseId] }); toast('Configuración pedagógica guardada.') },
     onError: (error) => toast(error.message, 'error'),
   })
+  const generate = useMutation({
+    mutationFn: () => api<{ activities: { id: string }[] }>(`/courses/${courseId}/assessments/generate-course`, {
+      method: 'POST', body: jsonBody({ ...generation, question_types: ['multiple_choice', 'open'] }),
+    }),
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['assessments', courseId] }),
+        queryClient.invalidateQueries({ queryKey: ['questions', courseId] }),
+      ])
+      toast(`${result.activities.length} actividades creadas como borradores. Revísalas antes de publicarlas.`)
+      navigate(`/teacher/courses/${courseId}/assessments`)
+    },
+    onError: (error) => toast(error.message, 'error'),
+  })
   if (courseQuery.isLoading || settingsQuery.isLoading || configQuery.isLoading) return <LoadingState />
   if (courseQuery.isError || settingsQuery.isError || configQuery.isError) return <ErrorState message="No pudimos cargar la configuración del curso." retry={() => { void courseQuery.refetch(); void settingsQuery.refetch(); void configQuery.refetch() }} />
   const configuration = configQuery.data!
 
   return <>
-    <PageHeader title="Configuración del curso" description="Actualiza los detalles del curso y define las reglas de acompañamiento." />
+    <PageHeader title="Configuración del curso" description="Actualiza los detalles, organiza las actividades y define las reglas de acompañamiento." />
     <div className="settings-layout">
       <div className="settings-main">
         <Card><div className="card-heading"><h2>Información general</h2><p className="muted-text text-small">Estos datos identifican el curso en la plataforma.</p></div><form className="card-content settings-form" onSubmit={(event) => { event.preventDefault(); saveCourse.mutate() }}>
@@ -49,6 +65,13 @@ export function SettingsPage() {
           <Field label="Estado"><Select value={course.status} onChange={(event) => setCourse({ ...course, status: event.target.value })}><option value="draft">Borrador</option><option value="active">Activo</option><option value="archived">Archivado</option></Select></Field>
           <div className="form-actions"><Button type="submit" disabled={saveCourse.isPending}><Save size={15} />Guardar cambios</Button></div>
         </form></Card>
+        <Card><div className="card-heading"><h2>Evaluaciones y prácticas</h2><p className="muted-text text-small">Genera borradores con OpenRouter desde la descripción del curso y el texto de tus materiales procesados. Revisa cada pregunta antes de publicarla.</p></div><div className="card-content settings-form">
+          <div className="form-grid"><Field label="Evaluaciones automáticas"><TextInput type="number" min="0" max="10" value={generation.evaluation_count} onChange={(event) => setGeneration({ ...generation, evaluation_count: Number(event.target.value) })} /></Field><Field label="Prácticas automáticas"><TextInput type="number" min="0" max="10" value={generation.practice_count} onChange={(event) => setGeneration({ ...generation, practice_count: Number(event.target.value) })} /></Field></div>
+          <Field label="Preguntas por actividad"><TextInput type="number" min="1" max="12" value={generation.question_count} onChange={(event) => setGeneration({ ...generation, question_count: Number(event.target.value) })} /></Field>
+          <div className="inline-alert alert-info form-note"><Sparkles size={16} /><span>La generación usa únicamente la descripción y materiales cargados. Los borradores quedan disponibles para edición y publicación.</span></div>
+          <div className="form-actions"><Button onClick={() => generate.mutate()} disabled={!configuration.ai_configured || generate.isPending || generation.evaluation_count + generation.practice_count < 1 || generation.evaluation_count > 10 || generation.practice_count > 10 || generation.question_count < 1 || generation.question_count > 12}><Sparkles size={15} />{generate.isPending ? 'Generando…' : 'Generar actividades'}</Button><Link className="button button-outline" to={`/teacher/courses/${courseId}/assessments`}><ClipboardCheck size={15} />Revisar evaluaciones</Link><Link className="button button-outline" to={`/teacher/courses/${courseId}/questions`}><FileQuestion size={15} />Banco de preguntas</Link></div>
+          {!configuration.ai_configured && <p className="field-hint">Configura OpenRouter en el entorno del servidor para habilitar la generación.</p>}
+        </div></Card>
         <Card><div className="card-heading"><h2>Principios pedagógicos</h2><p className="muted-text text-small">Parámetros del tutor y revisión humana.</p></div><form className="card-content settings-form" onSubmit={(event) => { event.preventDefault(); saveSettings.mutate() }}>
           <SettingToggle label="Modo socrático" description="Prioriza preguntas y pistas antes de explicar directamente." checked={settings.socratic_mode} onChange={(value) => setSettings({ ...settings, socratic_mode: value })} />
           <SettingToggle label="Revisión docente obligatoria" description="Las respuestas abiertas esperan revisión humana antes de confirmar una nota." checked={settings.human_review_required} onChange={(value) => setSettings({ ...settings, human_review_required: value })} />

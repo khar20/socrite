@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, ClipboardCheck, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { Check, ClipboardCheck, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { useParams } from 'react-router-dom'
 import { api, jsonBody } from '../api'
 import type { Assessment, Configuration, GeneratedPractice, Material, Question } from '../types'
@@ -11,6 +11,7 @@ export function AssessmentsPage() {
   const queryClient = useQueryClient()
   const toast = useToast()
   const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState<Assessment | null>(null)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [kind, setKind] = useState<Assessment['kind']>('practice')
@@ -31,15 +32,16 @@ export function AssessmentsPage() {
   const selectedTypes = [includeMultipleChoice ? 'multiple_choice' : '', includeOpen ? 'open' : ''].filter(Boolean)
   const validQuestionCount = Number.isInteger(questionCount) && questionCount >= 1 && questionCount <= 12
   const create = useMutation({
-    mutationFn: () => api<Assessment>(`/courses/${courseId}/assessments`, {
-      method: 'POST', body: jsonBody({ title, description, kind }),
+    mutationFn: () => api<Assessment>(editing ? `/assessments/${editing.id}` : `/courses/${courseId}/assessments`, {
+      method: editing ? 'PATCH' : 'POST', body: jsonBody(editing ? { title, description } : { title, description, kind }),
     }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['assessments', courseId] })
       setOpen(false)
+      setEditing(null)
       setTitle('')
       setDescription('')
-      toast('Evaluación creada como borrador.')
+      toast(editing ? 'Evaluación actualizada.' : 'Evaluación creada como borrador.')
     },
     onError: (error) => toast(error.message, 'error'),
   })
@@ -95,13 +97,21 @@ export function AssessmentsPage() {
     { value: 'transfer', label: 'Transferencia' },
   ]
 
+  function editAssessment(assessment: Assessment) {
+    setEditing(assessment)
+    setTitle(assessment.title)
+    setDescription(assessment.description)
+    setKind(assessment.kind)
+    setOpen(true)
+  }
+
   function openGeneration() {
     if (!materialId && readyMaterials.length) setMaterialId(readyMaterials[0].id)
     setGenerateOpen(true)
   }
 
   return <>
-    <PageHeader title="Evaluaciones" description="Agrupa preguntas publicadas en diagnósticos, prácticas, cuestionarios y actividades de transferencia." actions={<><Button variant="outline" onClick={openGeneration}><Sparkles size={16} />Generar práctica con IA</Button><Button onClick={() => setOpen(true)}><Plus size={16} />Nueva evaluación</Button></>} />
+    <PageHeader title="Evaluaciones" description="Agrupa preguntas publicadas en diagnósticos, prácticas, cuestionarios y actividades de transferencia." actions={<><Button variant="outline" onClick={openGeneration}><Sparkles size={16} />Generar práctica con IA</Button><Button onClick={() => { setEditing(null); setTitle(''); setDescription(''); setKind('practice'); setOpen(true) }}><Plus size={16} />Nueva evaluación</Button></>} />
     {!items.length ? <Card><EmptyState icon={ClipboardCheck} title="Aún no hay evaluaciones" description="Crea una evaluación y agrega preguntas publicadas del banco, o genera una práctica fundamentada con IA." action={<Button onClick={openGeneration}><Sparkles size={15} />Generar práctica</Button>} /></Card> : <div className="assessment-list">{items.map((assessment) => {
       const attached = questions.data!.filter((question) => assessment.question_ids.includes(question.id))
       const canPublish = attached.length > 0 && attached.every((question) => question.status === 'published')
@@ -126,12 +136,12 @@ export function AssessmentsPage() {
             {assessment.status === 'draft' && <div className="assessment-add-question"><Select aria-label="Pregunta para agregar" value={questionToAdd[assessment.id] || ''} onChange={(event) => setQuestionToAdd({ ...questionToAdd, [assessment.id]: event.target.value })}><option value="">Selecciona una pregunta publicada</option>{publishedQuestions.filter((question) => !assessment.question_ids.includes(question.id)).map((question) => <option value={question.id} key={question.id}>{question.prompt}</option>)}</Select><Button size="small" variant="outline" disabled={!questionToAdd[assessment.id] || addQuestion.isPending} onClick={() => { const questionId = questionToAdd[assessment.id]; addQuestion.mutate({ assessmentId: assessment.id, questionId, position: assessment.question_ids.length }); setQuestionToAdd({ ...questionToAdd, [assessment.id]: '' }) }}><Plus size={14} />Agregar</Button></div>}
             {assessment.status === 'draft' && attached.length > 0 && !canPublish && <div className="inline-alert alert-info form-note"><ClipboardCheck size={16} /><span>Publica todas las preguntas adjuntas en el banco antes de publicar la evaluación.</span></div>}
           </div>
-          {assessment.status === 'draft' && <Button variant="outline" size="small" disabled={!canPublish || publish.isPending} onClick={() => publish.mutate(assessment.id)}><Check size={14} />Publicar</Button>}
+          {assessment.status === 'draft' && <div className="question-actions"><Button variant="outline" size="small" onClick={() => editAssessment(assessment)}><Pencil size={14} />Editar</Button><Button variant="outline" size="small" disabled={!canPublish || publish.isPending} onClick={() => publish.mutate(assessment.id)}><Check size={14} />Publicar</Button></div>}
         </div>
       </Card>
     })}</div>}
     {!publishedQuestions.length && <div className="inline-alert alert-info page-note"><ClipboardCheck size={16} /><span>Publica preguntas del banco antes de agregarlas a una evaluación.</span></div>}
-    <Modal open={open} onClose={() => setOpen(false)} title="Nueva evaluación" description="La evaluación queda como borrador hasta que tenga preguntas y la publiques." onSubmit={(event) => { event.preventDefault(); create.mutate() }} submitLabel="Crear borrador" busy={create.isPending}>
+    <Modal open={open} onClose={() => { setOpen(false); setEditing(null) }} title={editing ? 'Editar evaluación' : 'Nueva evaluación'} description="La evaluación queda como borrador hasta que tenga preguntas y la publiques." onSubmit={(event) => { event.preventDefault(); create.mutate() }} submitLabel={editing ? 'Guardar cambios' : 'Crear borrador'} busy={create.isPending}>
       <Field label="Título" required><TextInput autoFocus value={title} onChange={(event) => setTitle(event.target.value.toUpperCase())} required minLength={2} maxLength={200} placeholder="Ej. Diagnóstico de funciones" /></Field>
       <Field label="Tipo"><Select value={kind} onChange={(event) => setKind(event.target.value as Assessment['kind'])}>{kinds.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</Select></Field>
       <Field label="Instrucciones"><TextArea rows={3} value={description} onChange={(event) => setDescription(event.target.value)} maxLength={5000} placeholder="Indica cómo prepararse y qué se espera en las respuestas." /></Field>

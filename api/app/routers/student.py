@@ -3,7 +3,7 @@ import math
 from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai import (
@@ -606,7 +606,9 @@ async def list_assessments(
         if skill_id:
             linked = linked.where(Question.skill_id == skill_id)
         else:
-            linked = linked.join(Skill, Skill.id == Question.skill_id).where(Skill.unit_id == unit_id)
+            linked = linked.outerjoin(Skill, Skill.id == Question.skill_id).where(
+                or_(Question.unit_id == unit_id, Skill.unit_id == unit_id),
+            )
         query = query.where(Assessment.id.in_(linked))
     assessments = (await db.execute(
         query.order_by(Assessment.published_at.desc())

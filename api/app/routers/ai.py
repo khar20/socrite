@@ -8,11 +8,54 @@ from app.config import settings
 from app.db import get_db
 from app.models import Material, MaterialChunk, Question, Unit, User
 from app.routers.courses import owned_course
-from app.schemas import PracticeGenerationIn
+from app.schemas import CourseActivitiesGenerationIn, PracticeGenerationIn
 from app.services.audit import record_event
 from app.services.generation import create_practice_assessment
 
 router = APIRouter(tags=["ai"])
+
+
+@router.post("/courses/{course_id}/assessments/generate-course", status_code=201)
+async def generate_course_activities(
+    course_id: str, data: CourseActivitiesGenerationIn,
+    teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> dict:
+    course = await owned_course(course_id, teacher, db)
+    if course.status == "archived":
+        raise HTTPException(status_code=409, detail="Archived courses cannot receive assessments")
+    if not settings.ai_configured:
+        raise HTTPException(status_code=503, detail="Configure OpenRouter to generate course activities")
+    if data.evaluation_count + data.practice_count == 0:
+        raise HTTPException(status_code=422, detail="Choose at least one evaluation or practice")
+    materials = (await db.execute(select(Material).where(
+        Material.course_id == course_id, Material.status == "ready", Material.chunk_count > 0,
+    ).order_by(Material.created_at))).scalars().all()
+    if not materials:
+        raise HTTPException(status_code=409, detail="Process uploaded course materials before generating activities")
+    units = (await db.execute(select(Unit).where(Unit.course_id == course_id).order_by(Unit.position))).scalars().all()
+    activities = []
+    total = data.evaluation_count + data.practice_count
+    try:
+        for index in range(total):
+            material = materials[index % len(materials)]
+            chunks = (await db.execute(select(MaterialChunk).where(
+                MaterialChunk.material_id == material.id,
+            ).order_by(MaterialChunk.chunk_index))).scalars().all()
+            unit = next((item for item in units if item.id == material.unit_id), None)
+            is_evaluation = index < data.evaluation_count
+            assessment, questions = await create_practice_assessment(
+                db, course=course, material=material, chunks=list(chunks), unit=unit,
+                actor_id=teacher.id, question_count=data.question_count,
+                question_types=data.question_types, focus="",
+                kind="quiz" if is_evaluation else "practice",
+            )
+            activities.append({"id": assessment.id, "kind": assessment.kind,
+                               "question_count": len(questions)})
+    except AIProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"activities": activities}
 
 
 @router.post("/courses/{course_id}/materials/{material_id}/generate-question", status_code=201)

@@ -34,6 +34,7 @@ from app.models import (
 from app.routers.courses import owned_course
 from app.schemas import (
     AssessmentCreate,
+    AssessmentUpdate,
     AssessmentQuestionIn,
     CourseInviteCreate,
     QuestionCreate,
@@ -453,6 +454,24 @@ async def create_assessment(
     await db.commit()
     return {"id": assessment.id, **data.model_dump(), "status": assessment.status,
             "settings": assessment.settings, "question_ids": []}
+
+
+@router.patch("/assessments/{assessment_id}")
+async def update_assessment(
+    assessment_id: str, data: AssessmentUpdate, teacher: User = Depends(require_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    assessment = await db.get(Assessment, assessment_id)
+    if assessment is None:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    await owned_course(assessment.course_id, teacher, db)
+    if assessment.status != "draft":
+        raise HTTPException(status_code=409, detail="Only draft assessments can be edited")
+    assessment.title = data.title
+    assessment.description = data.description
+    record_event(db, teacher.id, "assessment.updated", "assessment", assessment.id, assessment.course_id)
+    await db.commit()
+    return {"id": assessment.id, **data.model_dump(), "status": assessment.status}
 
 
 @router.put("/assessments/{assessment_id}/questions/{question_id}")

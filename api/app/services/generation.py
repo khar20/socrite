@@ -29,18 +29,7 @@ def practice_theme(material: Material) -> str:
 
 
 def build_course_context(course: Course, unit: Unit | None) -> str:
-    lines = [
-        f"Título: {course.title}",
-        f"Código: {course.code or '—'}",
-        f"Periodo académico: {course.academic_period or '—'}",
-        f"Créditos: {course.credits}",
-        f"Descripción: {course.description or '—'}",
-    ]
-    if unit is not None:
-        lines.append(f"Unidad: {unit.title}")
-        if unit.outcome:
-            lines.append(f"Resultado de aprendizaje: {unit.outcome}")
-    return "\n".join(lines)
+    return f"Descripción del curso:\n{course.description.strip()}" if course.description.strip() else ""
 
 
 def build_sources(
@@ -86,6 +75,7 @@ async def create_practice_assessment(
     question_count: int,
     question_types: list[str],
     focus: str,
+    kind: str = "practice",
 ) -> tuple[Assessment, list[Question]]:
     theme = practice_theme(material)
     source_map, sources = build_sources(material, chunks)
@@ -135,8 +125,9 @@ async def create_practice_assessment(
     if not prepared:
         raise ValueError("La IA no devolvió preguntas fundamentadas.")
 
-    title = f"PRÁCTICA: {theme.upper()}"[:200]
-    description = generated.description.strip() or f"Práctica de refuerzo sobre {theme}."
+    title_prefix = "EVALUACIÓN" if kind == "quiz" else "PRÁCTICA"
+    title = f"{title_prefix}: {theme.upper()}"[:200]
+    description = generated.description.strip()
     instructions = generated.instructions.strip() or (
         "Responde cada pregunta con tus propias palabras. "
         "Las respuestas abiertas serán revisadas por el docente."
@@ -169,7 +160,7 @@ async def create_practice_assessment(
         course_id=course.id,
         title=title,
         description=description,
-        kind="practice",
+        kind=kind,
         status="draft",
         settings=assessment_settings,
         created_by=actor_id,

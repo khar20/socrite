@@ -284,6 +284,16 @@ class AssessmentCreate(BaseModel):
         return uppercase_required_name(value)
 
 
+class AssessmentUpdate(BaseModel):
+    title: str = Field(min_length=2, max_length=200)
+    description: str = Field(default="", max_length=5000)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        return uppercase_required_name(value)
+
+
 class PracticeGenerationIn(BaseModel):
     material_id: str = Field(min_length=1, max_length=36)
     unit_id: str | None = Field(default=None, max_length=36)
@@ -306,6 +316,20 @@ class PracticeGenerationIn(BaseModel):
         if not unique:
             raise ValueError("Choose at least one question type")
         return unique
+
+
+class CourseActivitiesGenerationIn(BaseModel):
+    evaluation_count: int = Field(default=2, ge=0, le=10)
+    practice_count: int = Field(default=2, ge=0, le=10)
+    question_count: int = Field(default=6, ge=1, le=12)
+    question_types: list[str] = Field(default_factory=lambda: ["multiple_choice", "open"], min_length=1, max_length=2)
+
+    @field_validator("question_types")
+    @classmethod
+    def validate_types(cls, value: list[str]) -> list[str]:
+        if any(item not in {"multiple_choice", "open"} for item in value):
+            raise ValueError("Question types must be multiple_choice or open")
+        return list(dict.fromkeys(value))
 
 
 class GeneratedQuestion(BaseModel):
