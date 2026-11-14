@@ -643,11 +643,35 @@ async def delete_question(
     if question.status != "draft":
         raise HTTPException(status_code=409, detail="Published questions cannot be deleted")
     submissions = await db.scalar(select(func.count(Submission.id)).where(Submission.question_id == question.id)) or 0
-    if submissions:
-        raise HTTPException(status_code=409, detail="Questions used in submissions cannot be deleted")
-    record_event(db, teacher.id, "question.deleted", "question", question.id, question.course_id)
-    await db.delete(question)
-    await db.commit()
+    attempts = await db.scalar(select(func.count(QuestionAttempt.id)).where(
+        QuestionAttempt.question_id == question.id,
+    )) or 0
+    if submissions or attempts:
+        raise HTTPException(status_code=409, detail="This question has student responses or attempts and cannot be deleted")
+
+    associations = (await db.execute(
+        select(AssessmentQuestion, Assessment.status)
+        .join(Assessment, Assessment.id == AssessmentQuestion.assessment_id)
+        .where(AssessmentQuestion.question_id == question.id)
+    )).all()
+    if any(status != "draft" for _, status in associations):
+        raise HTTPException(
+            status_code=409,
+            detail="This question belongs to a published or archived assessment. Remove it from that assessment before deleting it.",
+        )
+
+    try:
+        for association, _ in associations:
+            await db.delete(association)
+        record_event(db, teacher.id, "question.deleted", "question", question.id, question.course_id)
+        await db.delete(question)
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This question is still referenced by student activity or an assessment and cannot be deleted.",
+        ) from exc
     return Response(status_code=204)
 
 

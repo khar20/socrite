@@ -92,11 +92,11 @@ export function QuestionsPage() {
   }
 
   async function deleteQuestion(question: Question) {
-    if (!window.confirm('¿Eliminar este borrador? Esta acción no se puede deshacer.')) return
+    if (!window.confirm('¿Eliminar este borrador? Se retirará de las evaluaciones en borrador asociadas. Esta acción no se puede deshacer.')) return
     try {
       await api(`/questions/${question.id}`, { method: 'DELETE' })
       await queryClient.invalidateQueries({ queryKey: ['questions', courseId] })
-      toast('Borrador eliminado.')
+      toast('Borrador eliminado y retirado de las evaluaciones en borrador asociadas.')
     } catch (error) { toast(error instanceof Error ? error.message : 'No se pudo eliminar.', 'error') }
   }
 
