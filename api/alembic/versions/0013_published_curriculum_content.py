@@ -5,7 +5,7 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision = "0013_published_curriculum_content"
+revision = "0013_curriculum_publish"
 down_revision = "0012_question_source_refs"
 branch_labels = None
 depends_on = None
