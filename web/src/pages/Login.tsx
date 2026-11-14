@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { BookOpen, Eye, EyeOff, Lightbulb, LockKeyhole, Mail } from 'lucide-react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, jsonBody } from '../api'
 import { useAuth } from '../auth-context'
 import type { User } from '../types'
@@ -12,7 +12,8 @@ type Mode = 'sign-in' | 'sign-up'
 export function LoginPage() {
   const { refresh, error: authError } = useAuth()
   const navigate = useNavigate()
-  const [mode, setMode] = useState<Mode>('sign-in')
+  const [searchParams] = useSearchParams()
+  const [mode, setMode] = useState<Mode>(searchParams.get('mode') === 'sign-up' ? 'sign-up' : 'sign-in')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -96,7 +97,7 @@ export function LoginPage() {
           </>}
           <Field label="Correo electrónico" required><div className="input-with-icon"><Mail size={16} /><TextInput type="email" value={email} onChange={(event) => { setEmail(event.target.value); setRegistrationRole(null); setStudentConsent(false) }} onBlur={() => void checkRegistrationRole()} autoComplete="email" required maxLength={320} placeholder="nombre@universidad.edu" /></div></Field>
           <Field label="Contraseña" hint={mode === 'sign-up' ? 'Usa al menos 12 caracteres.' : undefined} required><div className="password-input-wrap"><div className="input-with-icon"><LockKeyhole size={16} /><TextInput type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'} required minLength={mode === 'sign-up' ? 12 : 1} maxLength={128} /></div><button type="button" className="password-toggle" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}>{showPassword ? <EyeOff size={16} /> : <Eye size={16} />}</button></div></Field>
-          {mode === 'sign-up' && registrationRole === 'student' && <label className="consent-check"><input type="checkbox" checked={studentConsent} onChange={(event) => setStudentConsent(event.target.checked)} required /><span>Acepto el <Link to="/consentimiento-informado">Consentimiento informado para uso de sus datos</Link>.</span></label>}
+          {mode === 'sign-up' && registrationRole === 'student' && <label className="consent-check"><input type="checkbox" checked={studentConsent} onChange={(event) => setStudentConsent(event.target.checked)} required /><span>Acepto el <Link to="/consentimiento-informado" target="_blank" rel="noreferrer">Consentimiento informado para uso de sus datos</Link>.</span></label>}
           <Button type="submit" size="large" className="login-submit" disabled={busy || (mode === 'sign-up' && registrationRole === 'student' && !studentConsent)}>{busy ? 'Un momento…' : mode === 'sign-in' ? 'Ingresar' : 'Crear cuenta'}</Button>
         </form>
         <div className="login-switch">{mode === 'sign-in' ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?'}{' '}

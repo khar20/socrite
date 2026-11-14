@@ -202,8 +202,25 @@
 .consent-document > h1 { margin-block: 10px; font-size: clamp(25px, 4vw, 34px); line-height: 1.15; }
 .consent-document > section { margin-block-start: 26px; }
 .consent-document section h2 { margin-block-end: 7px; font-size: 16px; }
-.consent-document section p { color: hsl(var(--mf)); font-size: 13px; line-height: 1.7; }
+.consent-document-header { margin-block-end: 24px; }
+.consent-document-header p { margin-block: 0 5px; }
+.consent-institution { font-size: 14px; font-weight: 750; letter-spacing: .035em; }
+.consent-school, .consent-subtitle { color: hsl(var(--mf)); font-size: 12px; line-height: 1.6; }
+.consent-document-header h1 { margin-block: 18px 6px; font-size: clamp(22px, 3.6vw, 30px); line-height: 1.25; }
+.consent-study-details { display: grid; gap: 8px; margin: 20px 0 0; font-size: 13px; line-height: 1.65; }
+.consent-study-details div { display: grid; grid-template-columns: max-content 1fr; gap: 5px; }
+.consent-study-details dt { font-weight: 700; }
+.consent-study-details dd { margin: 0; color: hsl(var(--mf)); }
+.consent-divider { height: 1px; margin-block: 24px; border: 0; background: hsl(var(--br)); }
+.consent-document section p, .consent-document section li { color: hsl(var(--mf)); font-size: 13px; line-height: 1.7; }
+.consent-document section p + p { margin-block-start: 12px; }
+.consent-document section ul { display: grid; gap: 6px; margin: 10px 0 14px; padding-inline-start: 22px; }
+.consent-document section li { padding-inline-start: 2px; }
+.consent-document section strong { color: hsl(var(--fg)); }
 .consent-page-actions { margin-block-start: 30px; }
+@media (max-width: 520px) {
+  .consent-study-details div { grid-template-columns: 1fr; gap: 0; }
+}
 .login-screen { display: grid; min-height: 100dvh; grid-template-columns: minmax(320px, .9fr) minmax(0, 1.1fr); background: hsl(var(--bg)); }
 .login-aside { display: flex; min-height: 100%; flex-direction: column; padding: clamp(24px, 5vw, 68px); color: white; background: hsl(240 8% 8%); }
 .login-aside .brand-lockup { padding: 0; }
