@@ -111,4 +111,5 @@ export type PracticeAssessment = {
   learning_technique?: string
   question_count: number
   skills: { id: string; title: string }[]
+  topics?: { id: string; title: string }[]
 }

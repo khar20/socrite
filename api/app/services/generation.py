@@ -15,6 +15,8 @@ from app.models import (
     Material,
     MaterialChunk,
     Question,
+    Skill,
+    Topic,
     Unit,
 )
 from app.schemas import GeneratedPracticeAssessment, QuestionCreate
@@ -71,6 +73,8 @@ async def create_practice_assessment(
     material: Material,
     chunks: list[MaterialChunk],
     unit: Unit | None,
+    skill: Skill,
+    topic: Topic,
     actor_id: str,
     question_count: int,
     question_types: list[str],
@@ -90,8 +94,9 @@ async def create_practice_assessment(
         sources,
         question_count,
         question_types,
-        focus,
-        technique or ("transfer" if kind == "transfer" else "assessment" if kind == "quiz" else "practice"),
+        f"Habilidad objetivo: {skill.title}. Tema objetivo: {topic.title}. "
+        f"{focus.strip()}".strip(),
+        technique or ("transfer" if kind == "transfer" else "assessment" if kind in {"quiz", "diagnostic"} else "practice"),
     )
     try:
         generated = GeneratedPracticeAssessment.model_validate(payload)
@@ -117,7 +122,8 @@ async def create_practice_assessment(
             data = QuestionCreate(
                 prompt=item.prompt,
                 unit_id=unit.id if unit is not None else None,
-                skill_id=None,
+                skill_id=skill.id,
+                topic_id=topic.id,
                 question_type=item.question_type,
                 options=item.options,
                 answer_key=item.answer_key,
@@ -131,6 +137,7 @@ async def create_practice_assessment(
         raise ValueError("La IA no devolvió preguntas fundamentadas.")
 
     title_prefix = {
+        "diagnostic": "DIAGNÓSTICO",
         "quiz": "EVALUACIÓN",
         "transfer": "PROBLEMA DE TRANSFERENCIA",
     }.get(kind, "PRÁCTICA")
@@ -146,7 +153,7 @@ async def create_practice_assessment(
     ))
     assessment_settings = {
         "practice": True,
-        "learning_technique": technique or ("transfer" if kind == "transfer" else "assessment" if kind == "quiz" else "practice"),
+        "learning_technique": technique or ("transfer" if kind == "transfer" else "assessment" if kind in {"quiz", "diagnostic"} else "practice"),
         "theme": theme,
         "instructions": instructions,
         "question_count": len(prepared),
@@ -160,7 +167,7 @@ async def create_practice_assessment(
             "material_ids": [material.id],
             "material_name": material.name,
             "chunk_count": len(source_map),
-            "focus": focus.strip(),
+            "focus": f"Habilidad: {skill.title}; tema: {topic.title}; {focus.strip()}".strip(" ;"),
             "generated_at": datetime.now(UTC).isoformat(),
         },
     }
@@ -186,7 +193,9 @@ async def create_practice_assessment(
             question_type=data.question_type,
             options=data.options,
             answer_key=data.answer_key,
-            skill_id=None,
+            skill_id=data.skill_id,
+            topic_id=data.topic_id,
+            bank_visible=False,
             rubric=[criterion.model_dump() for criterion in data.rubric],
             status="draft",
             source_material_id=material.id,

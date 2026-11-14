@@ -28,6 +28,7 @@ from app.models import (
     StudentAllowlist,
     StudentSkillMastery,
     Submission,
+    Topic,
     Unit,
     User,
 )
@@ -429,12 +430,28 @@ async def list_assessments(
                                    .order_by(Assessment.created_at.desc()))).scalars().all()
     result = []
     for assessment in assessments:
+        attempt_count = await db.scalar(select(func.count(AssessmentAttempt.id)).where(
+            AssessmentAttempt.assessment_id == assessment.id,
+        )) or 0
         items = (await db.execute(select(AssessmentQuestion).where(
             AssessmentQuestion.assessment_id == assessment.id).order_by(AssessmentQuestion.position))).scalars().all()
+        linked_questions = (await db.execute(
+            select(Question).join(AssessmentQuestion, AssessmentQuestion.question_id == Question.id)
+            .where(AssessmentQuestion.assessment_id == assessment.id)
+            .order_by(AssessmentQuestion.position)
+        )).scalars().all() if items else []
         result.append({"id": assessment.id, "title": assessment.title, "description": assessment.description,
                        "kind": assessment.kind, "status": assessment.status,
                        "settings": assessment.settings,
+                       "attempt_count": attempt_count,
                        "question_ids": [item.question_id for item in items],
+                       "questions": [{"id": question.id, "prompt": question.prompt,
+                           "question_type": question.question_type, "options": question.options,
+                           "answer_key": question.answer_key, "rubric": question.rubric,
+                           "unit_id": question.unit_id, "skill_id": question.skill_id,
+                           "topic_id": question.topic_id, "bank_visible": question.bank_visible,
+                           "status": question.status, "source_refs": question.source_refs}
+                           for question in linked_questions],
                        "created_at": assessment.created_at})
     return result
 
@@ -465,14 +482,77 @@ async def update_assessment(
     if assessment is None:
         raise HTTPException(status_code=404, detail="Assessment not found")
     await owned_course(assessment.course_id, teacher, db)
-    if assessment.status != "draft":
-        raise HTTPException(status_code=409, detail="Only draft assessments can be edited")
+    if assessment.status not in {"draft", "published"}:
+        raise HTTPException(status_code=409, detail="Las actividades archivadas no se pueden editar.")
+    if assessment.status == "published":
+        attempt_count = await db.scalar(select(func.count(AssessmentAttempt.id)).where(
+            AssessmentAttempt.assessment_id == assessment.id,
+        )) or 0
+        if attempt_count:
+            raise HTTPException(status_code=409, detail="No se puede editar una actividad con intentos; archívala para conservar el historial.")
+        if data.kind != assessment.kind:
+            raise HTTPException(status_code=409, detail="El tipo de una actividad publicada no se puede cambiar.")
     assessment.title = data.title
     assessment.description = data.description
+    if assessment.status == "draft":
+        assessment.kind = data.kind
     assessment.settings = {**(assessment.settings or {}), "instructions": data.instructions}
     record_event(db, teacher.id, "assessment.updated", "assessment", assessment.id, assessment.course_id)
     await db.commit()
     return {"id": assessment.id, **data.model_dump(), "status": assessment.status}
+
+
+@router.delete("/assessments/{assessment_id}")
+async def delete_assessment(
+    assessment_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> dict:
+    assessment = await db.get(Assessment, assessment_id)
+    if assessment is None:
+        raise HTTPException(status_code=404, detail="No se encontró la actividad.")
+    await owned_course(assessment.course_id, teacher, db)
+    attempts = await db.scalar(select(func.count(AssessmentAttempt.id)).where(
+        AssessmentAttempt.assessment_id == assessment.id,
+    )) or 0
+    try:
+        if assessment.status != "draft" or attempts:
+            assessment.status = "archived"
+            record_event(db, teacher.id, "assessment.archived", "assessment", assessment.id,
+                         assessment.course_id, {"attempt_count": attempts})
+        else:
+            associations = (await db.execute(select(AssessmentQuestion).where(
+                AssessmentQuestion.assessment_id == assessment.id,
+            ))).scalars().all()
+            private_question_ids = []
+            for association in associations:
+                question = await db.get(Question, association.question_id)
+                if question is not None and not question.bank_visible:
+                    private_question_ids.append(question.id)
+                await db.delete(association)
+            await db.flush()
+            await db.delete(assessment)
+            await db.flush()
+            for question_id in private_question_ids:
+                used_elsewhere = await db.scalar(select(func.count(AssessmentQuestion.id)).where(
+                    AssessmentQuestion.question_id == question_id,
+                )) or 0
+                has_attempts = await db.scalar(select(func.count(QuestionAttempt.id)).where(
+                    QuestionAttempt.question_id == question_id,
+                )) or 0
+                has_submissions = await db.scalar(select(func.count(Submission.id)).where(
+                    Submission.question_id == question_id,
+                )) or 0
+                if not used_elsewhere and not has_attempts and not has_submissions:
+                    question = await db.get(Question, question_id)
+                    if question is not None:
+                        await db.delete(question)
+            record_event(db, teacher.id, "assessment.deleted", "assessment", assessment.id,
+                         assessment.course_id)
+        archived = assessment.status == "archived"
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="No se puede eliminar la actividad porque tiene respuestas asociadas.") from exc
+    return {"id": assessment_id, "status": "archived" if archived else "deleted"}
 
 
 @router.put("/assessments/{assessment_id}/questions/{question_id}")
@@ -487,8 +567,16 @@ async def assign_assessment_question(
     await owned_course(assessment.course_id, teacher, db)
     if assessment.status != "draft":
         raise HTTPException(status_code=409, detail="Only draft assessments can be edited")
-    if question.course_id != assessment.course_id or question.status != "published":
+    if question.course_id != assessment.course_id or question.status != "published" or not question.bank_visible:
         raise HTTPException(status_code=422, detail="Choose a published question from this course")
+    if not question.skill_id or not question.topic_id:
+        raise HTTPException(status_code=409, detail="La pregunta debe estar vinculada con una habilidad y un tema.")
+    skill = await db.get(Skill, question.skill_id)
+    topic = await db.get(Topic, question.topic_id)
+    unit = await db.get(Unit, skill.unit_id) if skill else None
+    if (skill is None or topic is None or unit is None or unit.course_id != assessment.course_id
+            or skill.unit_id != topic.unit_id or skill.status != "published" or topic.status != "published"):
+        raise HTTPException(status_code=409, detail="La pregunta debe estar vinculada a una habilidad y tema publicados de este curso.")
     item = await db.scalar(select(AssessmentQuestion).where(
         AssessmentQuestion.assessment_id == assessment_id,
         AssessmentQuestion.question_id == question_id,
@@ -516,12 +604,26 @@ async def remove_assessment_question(
     await owned_course(assessment.course_id, teacher, db)
     if assessment.status != "draft":
         raise HTTPException(status_code=409, detail="Only draft assessments can be edited")
+    question = await db.get(Question, question_id)
     item = await db.scalar(select(AssessmentQuestion).where(
         AssessmentQuestion.assessment_id == assessment_id,
         AssessmentQuestion.question_id == question_id,
     ))
     if item is not None:
         await db.delete(item)
+        await db.flush()
+        if not question.bank_visible:
+            other_links = await db.scalar(select(func.count(AssessmentQuestion.id)).where(
+                AssessmentQuestion.question_id == question.id,
+            )) or 0
+            attempts = await db.scalar(select(func.count(QuestionAttempt.id)).where(
+                QuestionAttempt.question_id == question.id,
+            )) or 0
+            submissions = await db.scalar(select(func.count(Submission.id)).where(
+                Submission.question_id == question.id,
+            )) or 0
+            if not other_links and not attempts and not submissions:
+                await db.delete(question)
         record_event(db, teacher.id, "assessment.question.removed", "assessment", assessment.id,
                      assessment.course_id, {"question_id": question_id})
         await db.commit()
@@ -545,24 +647,28 @@ async def publish_assessment(
     )) or 0
     if not count:
         raise HTTPException(status_code=409, detail="Add at least one question before publishing")
-    unpublished = await db.scalar(
-        select(func.count(AssessmentQuestion.id))
-        .join(Question, Question.id == AssessmentQuestion.question_id)
-        .where(
-            AssessmentQuestion.assessment_id == assessment.id,
-            Question.status != "published",
-        )
-    ) or 0
-    if unpublished:
-        raise HTTPException(status_code=409, detail="Publish all attached questions before publishing the assessment")
-    unapproved_skills = await db.scalar(
-        select(func.count(AssessmentQuestion.id))
-        .join(Question, Question.id == AssessmentQuestion.question_id)
-        .join(Skill, Skill.id == Question.skill_id)
-        .where(AssessmentQuestion.assessment_id == assessment.id, Skill.status != "published")
-    ) or 0
-    if unapproved_skills:
-        raise HTTPException(status_code=409, detail="Approve all linked skills before publishing this activity")
+    linked_questions = (await db.execute(
+        select(Question).join(AssessmentQuestion, AssessmentQuestion.question_id == Question.id)
+        .where(AssessmentQuestion.assessment_id == assessment.id)
+    )).scalars().all()
+    private_questions = []
+    for question in linked_questions:
+        if question.bank_visible and question.status != "published":
+            raise HTTPException(status_code=409, detail="Aprueba las preguntas del banco antes de publicar la actividad.")
+        if question.status == "archived" or not question.skill_id or not question.topic_id:
+            raise HTTPException(status_code=409, detail="Cada pregunta debe tener una habilidad y un tema publicados.")
+        if question.question_type == "open" and not question.rubric:
+            raise HTTPException(status_code=409, detail="Agrega criterios de revisión a cada pregunta abierta antes de publicar.")
+        skill = await db.get(Skill, question.skill_id)
+        topic = await db.get(Topic, question.topic_id)
+        unit = await db.get(Unit, skill.unit_id) if skill else None
+        if (skill is None or topic is None or unit is None or unit.course_id != assessment.course_id
+                or skill.unit_id != topic.unit_id or skill.status != "published" or topic.status != "published"):
+            raise HTTPException(status_code=409, detail="Publica la habilidad y el tema vinculados a cada pregunta.")
+        if not question.bank_visible and question.status == "draft":
+            private_questions.append(question)
+    for question in private_questions:
+        question.status = "published"
     assessment.status = "published"
     assessment.published_at = datetime.now(UTC)
     record_event(db, teacher.id, "assessment.published", "assessment", assessment.id,
@@ -571,15 +677,35 @@ async def publish_assessment(
     return {"id": assessment.id, "status": assessment.status}
 
 
+async def validate_question_curriculum(
+    db: AsyncSession, course_id: str, data: QuestionCreate,
+) -> str:
+    if not data.skill_id or not data.topic_id:
+        raise HTTPException(status_code=422, detail="Vincula cada pregunta con una habilidad y un tema publicados.")
+    skill = await db.get(Skill, data.skill_id)
+    topic = await db.get(Topic, data.topic_id)
+    if skill is None or topic is None or skill.unit_id != topic.unit_id:
+        raise HTTPException(status_code=422, detail="La habilidad y el tema deben pertenecer a la misma unidad.")
+    unit = await db.get(Unit, skill.unit_id)
+    if unit is None or unit.course_id != course_id or (data.unit_id and data.unit_id != unit.id):
+        raise HTTPException(status_code=422, detail="La habilidad y el tema deben pertenecer a este curso y unidad.")
+    if skill.status != "published" or topic.status != "published":
+        raise HTTPException(status_code=409, detail="Publica la habilidad y el tema antes de vincular la pregunta.")
+    return unit.id
+
+
 @router.get("/courses/{course_id}/questions")
 async def questions(
     course_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await owned_course(course_id, teacher, db)
-    result = await db.execute(select(Question).where(Question.course_id == course_id)
+    result = await db.execute(select(Question).where(
+        Question.course_id == course_id, Question.bank_visible.is_(True),
+    )
                               .order_by(Question.created_at.desc()))
     return [{"id": q.id, "prompt": q.prompt, "unit_id": q.unit_id, "question_type": q.question_type,
-             "skill_id": q.skill_id, "options": q.options, "answer_key": q.answer_key,
+             "skill_id": q.skill_id, "topic_id": q.topic_id, "bank_visible": q.bank_visible,
+             "options": q.options, "answer_key": q.answer_key,
              "rubric": q.rubric, "irt_difficulty": q.irt_difficulty,
              "irt_discrimination": q.irt_discrimination,
              "source_refs": q.source_refs,
@@ -593,18 +719,8 @@ async def create_question(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await owned_course(course_id, teacher, db)
-    if data.unit_id:
-        unit = await db.get(Unit, data.unit_id)
-        if unit is None or unit.course_id != course_id:
-            raise HTTPException(status_code=422, detail="Unit does not belong to this course")
-    if data.skill_id:
-        skill = await db.get(Skill, data.skill_id)
-        if skill is None:
-            raise HTTPException(status_code=422, detail="Skill not found")
-        unit = await db.get(Unit, skill.unit_id)
-        if unit is None or unit.course_id != course_id or (data.unit_id and skill.unit_id != data.unit_id):
-            raise HTTPException(status_code=422, detail="Skill does not belong to this course unit")
-    question = Question(course_id=course_id, **data.model_dump())
+    linked_unit_id = await validate_question_curriculum(db, course_id, data)
+    question = Question(course_id=course_id, **(data.model_dump() | {"unit_id": linked_unit_id}))
     db.add(question)
     await db.flush()
     record_event(db, teacher.id, "question.created", "question", question.id, course_id)
@@ -623,22 +739,13 @@ async def update_question(
     await owned_course(question.course_id, teacher, db)
     if question.status != "draft":
         raise HTTPException(status_code=409, detail="Only draft questions can be edited")
-    if data.unit_id:
-        unit = await db.get(Unit, data.unit_id)
-        if unit is None or unit.course_id != question.course_id:
-            raise HTTPException(status_code=422, detail="Unit does not belong to this course")
-    if data.skill_id:
-        skill = await db.get(Skill, data.skill_id)
-        if skill is None:
-            raise HTTPException(status_code=422, detail="Skill not found")
-        unit = await db.get(Unit, skill.unit_id)
-        if unit is None or unit.course_id != question.course_id or (data.unit_id and skill.unit_id != data.unit_id):
-            raise HTTPException(status_code=422, detail="Skill does not belong to this course unit")
-    for key, value in data.model_dump().items():
+    linked_unit_id = await validate_question_curriculum(db, question.course_id, data)
+    values = data.model_dump() | {"unit_id": linked_unit_id}
+    for key, value in values.items():
         setattr(question, key, value)
     record_event(db, teacher.id, "question.updated", "question", question.id, question.course_id)
     await db.commit()
-    return {"id": question.id, **data.model_dump(), "status": question.status}
+    return {"id": question.id, **values, "status": question.status}
 
 
 @router.delete("/questions/{question_id}", status_code=204)

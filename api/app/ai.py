@@ -136,6 +136,10 @@ async def generate_practice_assessment(
         type_guidance.append(
             "open: sin opciones ni answer_key; incluye una rúbrica de 2 a 4 criterios observables."
         )
+    if "numeric" in question_types:
+        type_guidance.append(
+            "numeric: respuesta numérica con answer_key numérico; la cifra y su unidad deben estar sustentadas explícitamente en las fuentes."
+        )
     technique_guidance = {
         "practice": "Diseña práctica de recuperación activa.",
         "spaced_repetition": "Diseña preguntas breves de recuperación activa apropiadas para repaso espaciado.",
@@ -166,7 +170,7 @@ async def generate_practice_assessment(
         "- No menciones los identificadores dentro del enunciado.\n"
         "- Devuelve exactamente esta estructura JSON: "
         '{"title": "...", "description": "...", "instructions": "...", '
-        '"questions": [{"prompt": "...", "question_type": "multiple_choice|open", '
+        '"questions": [{"prompt": "...", "question_type": "multiple_choice|open|numeric", '
         '"options": ["..."], "answer_key": 0, "rubric": ["..."], "source_ids": ["S1"]}]}\n\n'
         f"FUENTES:\n{sources}"
     )

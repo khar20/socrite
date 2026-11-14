@@ -79,6 +79,8 @@ export type Question = {
   prompt: string
   unit_id: string | null
   skill_id?: string | null
+  topic_id?: string | null
+  bank_visible?: boolean
   question_type: 'open' | 'multiple_choice' | 'numeric'
   options?: string[] | null
   answer_key?: unknown
@@ -119,6 +121,8 @@ export type Assessment = {
   status: 'draft' | 'published' | 'archived'
   settings?: AssessmentSettings
   question_ids: string[]
+  questions?: Question[]
+  attempt_count?: number
   created_at?: string
 }
 

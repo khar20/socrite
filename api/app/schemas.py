@@ -235,6 +235,7 @@ class QuestionCreate(BaseModel):
     prompt: str = Field(min_length=5, max_length=10000)
     unit_id: str | None = None
     skill_id: str | None = None
+    topic_id: str | None = None
     question_type: str = Field(default="open", pattern="^(open|multiple_choice|numeric)$")
     options: list[str] | None = Field(default=None, max_length=8)
     answer_key: Any = None
@@ -287,6 +288,7 @@ class AssessmentUpdate(BaseModel):
     title: str = Field(min_length=2, max_length=200)
     description: str = Field(default="", max_length=5000)
     instructions: str = Field(default="", max_length=5000)
+    kind: str = Field(default="practice", pattern="^(diagnostic|practice|quiz|transfer)$")
 
     @field_validator("title")
     @classmethod
@@ -297,20 +299,21 @@ class AssessmentUpdate(BaseModel):
 class PracticeGenerationIn(BaseModel):
     material_id: str = Field(min_length=1, max_length=36)
     unit_id: str | None = Field(default=None, max_length=36)
+    skill_id: str = Field(min_length=1, max_length=36)
+    topic_id: str = Field(min_length=1, max_length=36)
+    kind: str = Field(default="quiz", pattern="^(diagnostic|practice|quiz|transfer)$")
     question_count: int = Field(default=6, ge=1, le=12)
-    question_types: list[str] = Field(
-        default_factory=lambda: ["multiple_choice", "open"], min_length=1, max_length=2,
-    )
+    question_types: list[str] = Field(default_factory=lambda: ["multiple_choice", "open"], min_length=1, max_length=3)
     focus: str = Field(default="", max_length=500)
 
     @field_validator("question_types")
     @classmethod
     def validate_types(cls, value: list[str]) -> list[str]:
-        allowed = {"multiple_choice", "open"}
+        allowed = {"multiple_choice", "open", "numeric"}
         unique = []
         for item in value:
             if item not in allowed:
-                raise ValueError("Question types must be multiple_choice or open")
+                raise ValueError("Question types must be multiple_choice, open, or numeric")
             if item not in unique:
                 unique.append(item)
         if not unique:
@@ -324,13 +327,13 @@ class CourseActivitiesGenerationIn(BaseModel):
     spaced_repetition_count: int = Field(default=0, ge=0, le=10)
     transfer_count: int = Field(default=0, ge=0, le=10)
     question_count: int = Field(default=6, ge=1, le=12)
-    question_types: list[str] = Field(default_factory=lambda: ["multiple_choice", "open"], min_length=1, max_length=2)
+    question_types: list[str] = Field(default_factory=lambda: ["multiple_choice", "open"], min_length=1, max_length=3)
 
     @field_validator("question_types")
     @classmethod
     def validate_types(cls, value: list[str]) -> list[str]:
-        if any(item not in {"multiple_choice", "open"} for item in value):
-            raise ValueError("Question types must be multiple_choice or open")
+        if any(item not in {"multiple_choice", "open", "numeric"} for item in value):
+            raise ValueError("Question types must be multiple_choice, open, or numeric")
         return list(dict.fromkeys(value))
 
     @model_validator(mode="after")
@@ -342,9 +345,9 @@ class CourseActivitiesGenerationIn(BaseModel):
 
 class GeneratedQuestion(BaseModel):
     prompt: str = Field(min_length=5, max_length=10000)
-    question_type: str = Field(pattern="^(open|multiple_choice)$")
+    question_type: str = Field(pattern="^(open|multiple_choice|numeric)$")
     options: list[str] | None = Field(default=None, max_length=8)
-    answer_key: int | None = None
+    answer_key: Any = None
     rubric: list[str] = Field(default_factory=list, max_length=30)
     source_ids: list[str] = Field(min_length=1, max_length=8)
 
@@ -357,6 +360,8 @@ class GeneratedQuestion(BaseModel):
                 return "multiple_choice"
             if normalized in {"open", "abierta", "respuesta_abierta"}:
                 return "open"
+            if normalized in {"numeric", "numérica", "numerica", "respuesta_numerica"}:
+                return "numeric"
         return value
 
     @field_validator("options", mode="before")
@@ -376,6 +381,10 @@ class GeneratedQuestion(BaseModel):
             text = value.strip().upper()
             if text.isdigit():
                 return int(text)
+            try:
+                return float(text)
+            except ValueError:
+                pass
             if len(text) == 1 and text in "ABCDEFGH":
                 return ord(text) - ord("A")
         return value
@@ -424,6 +433,11 @@ class GeneratedQuestion(BaseModel):
                 raise ValueError("The answer key must be the index of a valid option")
             if not 0 <= self.answer_key < len(self.options):
                 raise ValueError("The answer key must be the index of a valid option")
+        elif self.question_type == "numeric":
+            if not isinstance(self.answer_key, (int, float)) or isinstance(self.answer_key, bool):
+                raise ValueError("Numeric questions require a numeric answer key")
+            self.options = None
+            self.rubric = []
         else:
             self.options = None
             self.answer_key = None

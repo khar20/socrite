@@ -68,7 +68,7 @@ export function StudentPathPage() {
         <div className="unit-collapse"><div>
           <div className="unit-body">
             {unit.outcome && <p className="unit-outcome">{unit.outcome}</p>}
-            {!!unit.topics.length && <div className="topic-chips">{unit.topics.map((topic) => <span className="topic-chip" key={topic.id}><BookOpen size={12} />{topic.title}</span>)}</div>}
+            {!!unit.topics.length && <div className="topic-chips">{unit.topics.map((topic) => <Link className="topic-chip" key={topic.id} to={`/student/courses/${courseId}/practice?topic_id=${topic.id}`}><BookOpen size={12} />{topic.title}</Link>)}</div>}
             {unit.excerpt && <blockquote className="unit-excerpt"><FileText size={15} /><span>{unit.excerpt}…</span></blockquote>}
 
             {!!unit.materials.length && <div className="unit-materials">{unit.materials.map((material) => <button className="unit-material" key={material.id} onClick={() => void openMaterial(material.id)}>

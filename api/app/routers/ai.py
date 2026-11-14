@@ -38,8 +38,20 @@ async def generate_course_activities(
     ).order_by(Material.created_at))).scalars().all()
     if not materials:
         raise HTTPException(status_code=409, detail="Procesa materiales del curso antes de generar actividades.")
-    units = (await db.execute(select(Unit).where(Unit.course_id == course_id).order_by(Unit.position))).scalars().all()
     activities = []
+    curriculum_links = (await db.execute(
+        select(Skill, Topic, Unit)
+        .join(Unit, Unit.id == Skill.unit_id)
+        .join(Topic, Topic.unit_id == Unit.id)
+        .where(Unit.course_id == course_id, Skill.status == "published", Topic.status == "published")
+        .order_by(Unit.position, Skill.position, Topic.position)
+    )).all()
+    if not curriculum_links:
+        raise HTTPException(status_code=409, detail="Publica al menos una habilidad y un tema antes de generar actividades.")
+    curriculum_unit_ids = {unit.id for _, _, unit in curriculum_links}
+    materials = [material for material in materials if material.unit_id is None or material.unit_id in curriculum_unit_ids]
+    if not materials:
+        raise HTTPException(status_code=409, detail="Vincula un material procesado con una unidad que tenga temas y habilidades publicados.")
     activity_kinds = (
         [("quiz", "assessment")] * data.evaluation_count
         + [("practice", "practice")] * data.practice_count
@@ -52,9 +64,11 @@ async def generate_course_activities(
             chunks = (await db.execute(select(MaterialChunk).where(
                 MaterialChunk.material_id == material.id,
             ).order_by(MaterialChunk.chunk_index))).scalars().all()
-            unit = next((item for item in units if item.id == material.unit_id), None)
+            matching_links = [row for row in curriculum_links if row[2].id == material.unit_id] if material.unit_id else curriculum_links
+            skill, topic, unit = matching_links[index % len(matching_links)]
             assessment, questions = await create_practice_assessment(
                 db, course=course, material=material, chunks=list(chunks), unit=unit,
+                skill=skill, topic=topic,
                 actor_id=teacher.id, question_count=data.question_count,
                 question_types=data.question_types, focus="",
                 kind=kind,
@@ -230,6 +244,19 @@ async def generate_practice_assessment_draft(
         if len(units) == 1:
             unit = units[0]
 
+    skill = await db.get(Skill, data.skill_id)
+    topic = await db.get(Topic, data.topic_id)
+    linked_unit = await db.get(Unit, skill.unit_id) if skill else None
+    topic_unit = await db.get(Unit, topic.unit_id) if topic else None
+    if (skill is None or topic is None or linked_unit is None or topic_unit is None
+            or linked_unit.course_id != course_id or topic_unit.course_id != course_id
+            or skill.unit_id != topic.unit_id
+            or (unit is not None and skill.unit_id != unit.id)):
+        raise HTTPException(status_code=422, detail="Elige un tema y una habilidad publicados de la misma unidad del curso.")
+    if skill.status != "published" or topic.status != "published":
+        raise HTTPException(status_code=409, detail="Publica el tema y la habilidad antes de generar la evaluación.")
+    unit = linked_unit
+
     try:
         assessment, questions = await create_practice_assessment(
             db,
@@ -237,10 +264,13 @@ async def generate_practice_assessment_draft(
             material=material,
             chunks=list(chunks),
             unit=unit,
+            skill=skill,
+            topic=topic,
             actor_id=teacher.id,
             question_count=data.question_count,
             question_types=data.question_types,
             focus=data.focus,
+            kind=data.kind,
         )
     except AIProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -264,6 +294,8 @@ async def generate_practice_assessment_draft(
             "rubric": question.rubric,
             "unit_id": question.unit_id,
             "skill_id": question.skill_id,
+            "topic_id": question.topic_id,
+            "bank_visible": question.bank_visible,
             "status": question.status,
             "source_refs": question.source_refs,
         } for question in questions],
@@ -280,6 +312,15 @@ async def publish_question(
     await owned_course(question.course_id, teacher, db)
     if question.status == "published":
         return {"id": question.id, "status": question.status}
+    if not question.bank_visible:
+        raise HTTPException(status_code=409, detail="Esta pregunta se publica junto con su evaluación.")
+    skill = await db.get(Skill, question.skill_id) if question.skill_id else None
+    topic = await db.get(Topic, question.topic_id) if question.topic_id else None
+    linked_unit = await db.get(Unit, skill.unit_id) if skill else None
+    if (skill is None or topic is None or linked_unit is None or linked_unit.course_id != question.course_id
+            or skill.unit_id != topic.unit_id
+            or skill.status != "published" or topic.status != "published"):
+        raise HTTPException(status_code=409, detail="Vincula la pregunta con una habilidad y un tema publicados antes de aprobarla.")
     if question.question_type == "open" and not question.rubric:
         raise HTTPException(status_code=422, detail="Add at least one review criterion before publishing")
     question.status = "published"

@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '../../api'
 import { Badge, Button, Card, EmptyState, ErrorState, LoadingState, PageHeader, useToast } from '../../components/ui'
 
-type TransferAssessment = { id: string; title: string; description: string; kind: string; question_count: number }
+type TransferAssessment = { id: string; title: string; description: string; kind: string; question_count: number; skills?: { id: string; title: string }[]; topics?: { id: string; title: string }[] }
 type Submission = {
   id: string; question: string; response: string; suggested_score: number | null
   final_score: number | null; teacher_comment: string | null
@@ -37,6 +37,8 @@ export function StudentProblemsPage() {
           <Badge tone="info">Transferencia</Badge>
           <h2>{problem.title}</h2>
           <p className="muted-text text-small">{problem.description || 'Aplica los conceptos del curso en una situación distinta a los ejemplos.'}</p>
+          {!!problem.topics?.length && <div className="topic-chips">{problem.topics.map((topic) => <span className="topic-chip" key={topic.id}>{topic.title}</span>)}</div>}
+          {!!problem.skills?.length && <div className="topic-chips">{problem.skills.map((skill) => <span className="topic-chip" key={skill.id}><Target size={12} />{skill.title}</span>)}</div>}
           <small className="muted-text">{problem.question_count} {problem.question_count === 1 ? 'pregunta' : 'preguntas'} · revisión docente</small>
         </div>
         <Button disabled={start.isPending} onClick={() => start.mutate(problem.id)}>{start.isPending ? 'Preparando…' : 'Resolver'}<ArrowRight size={15} /></Button>

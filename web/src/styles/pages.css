@@ -270,6 +270,10 @@
 .student-material-row .material-copy { flex: 1; }
 .student-material-row > svg { color: hsl(var(--mf)); }
 .assessment-list { display: flex; flex-direction: column; gap: 12px; }
+.assessment-filters { display: flex; flex-wrap: wrap; gap: 7px; margin-block-end: 16px; }
+.assessment-filters button { min-height: 34px; padding: 6px 12px; border: 1px solid hsl(var(--br)); border-radius: 999px; color: hsl(var(--mf)); background: hsl(var(--bg)); font-size: 12px; }
+.assessment-filters button:hover, .assessment-filters button.is-active { border-color: hsl(var(--pr)); color: hsl(var(--pf)); background: hsl(var(--pr)); }
+.assessment-question-actions { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 .feedback-list { display: flex; flex-direction: column; gap: 12px; }
 .feedback-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 18px 12px; }
 .feedback-heading h2 { max-width: 730px; }

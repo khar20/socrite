@@ -238,6 +238,8 @@ class Question(Base):
     options: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     answer_key: Mapped[dict | list | str | int | float | None] = mapped_column(JSONB, nullable=True)
     skill_id: Mapped[str | None] = mapped_column(ForeignKey("skills.id", ondelete="SET NULL"), nullable=True, index=True)
+    topic_id: Mapped[str | None] = mapped_column(ForeignKey("unit_topics.id", ondelete="SET NULL"), nullable=True, index=True)
+    bank_visible: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
     rubric: Mapped[list] = mapped_column(JSONB, default=list)
     irt_difficulty: Mapped[float | None] = mapped_column(Float, nullable=True)
     irt_discrimination: Mapped[float | None] = mapped_column(Float, nullable=True)

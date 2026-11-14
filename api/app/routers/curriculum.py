@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_teacher
 from app.db import get_db
-from app.models import Assessment, AssessmentQuestion, Course, Question, Skill, Topic, Unit, User
+from app.models import Assessment, AssessmentQuestion, Course, Question, QuestionAttempt, Skill, Topic, Unit, User
 from app.routers.courses import owned_course
 from app.schemas import SkillIn, SkillUpdate, TopicIn, TopicUpdate, UnitIn
 from app.services.audit import record_event
@@ -86,6 +86,9 @@ async def delete_unit(
     unit_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Response:
     unit = await owned_unit(unit_id, teacher, db)
+    linked_questions = await db.scalar(select(func.count(Question.id)).where(Question.unit_id == unit.id)) or 0
+    if linked_questions:
+        raise HTTPException(status_code=409, detail="No se puede eliminar una unidad vinculada a preguntas o respuestas de estudiantes.")
     record_event(db, teacher.id, "unit.deleted", "unit", unit.id, unit.course_id)
     await db.delete(unit)
     await db.commit()
@@ -126,6 +129,9 @@ async def update_topic(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     topic = await owned_entry(Topic, topic_id, teacher, db)
+    protected = await db.scalar(select(func.count(Question.id)).where(Question.topic_id == topic.id)) or 0
+    if protected:
+        raise HTTPException(status_code=409, detail="Este tema está vinculado a preguntas publicadas. Crea otro tema para mantener el historial.")
     for key, value in data.model_dump().items():
         setattr(topic, key, value)
     topic.status = "draft"
@@ -153,6 +159,9 @@ async def delete_topic(
     topic_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Response:
     topic = await owned_entry(Topic, topic_id, teacher, db)
+    linked = await db.scalar(select(func.count(Question.id)).where(Question.topic_id == topic.id)) or 0
+    if linked:
+        raise HTTPException(status_code=409, detail="No se puede eliminar un tema vinculado a preguntas o intentos de estudiantes.")
     unit = await db.get(Unit, topic.unit_id)
     record_event(db, teacher.id, "topic.deleted", "topic", topic.id, unit.course_id)
     await db.delete(topic)
@@ -172,10 +181,17 @@ async def update_skill(
         .join(Assessment, Assessment.id == AssessmentQuestion.assessment_id)
         .where(Question.skill_id == skill.id, Assessment.status == "published")
     ) or 0
-    if published_activities:
+    question_evidence = await db.scalar(
+        select(func.count(QuestionAttempt.id)).join(Question, Question.id == QuestionAttempt.question_id)
+        .where(Question.skill_id == skill.id)
+    ) or 0
+    linked_questions = await db.scalar(select(func.count(Question.id)).where(
+        Question.skill_id == skill.id,
+    )) or 0
+    if published_activities or question_evidence or linked_questions:
         raise HTTPException(
             status_code=409,
-            detail="This skill is used by a published activity. Create a revised skill or archive the activity before editing it.",
+            detail="Esta habilidad está vinculada a preguntas o respuestas. Crea una habilidad revisada y vuelve a vincular las preguntas para conservar el historial.",
         )
     for key, value in data.model_dump().items():
         setattr(skill, key, value)
@@ -204,6 +220,9 @@ async def delete_skill(
     skill_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> Response:
     skill = await owned_entry(Skill, skill_id, teacher, db)
+    linked = await db.scalar(select(func.count(Question.id)).where(Question.skill_id == skill.id)) or 0
+    if linked:
+        raise HTTPException(status_code=409, detail="No se puede eliminar una habilidad vinculada a preguntas o intentos de estudiantes.")
     unit = await db.get(Unit, skill.unit_id)
     record_event(db, teacher.id, "skill.deleted", "skill", skill.id, unit.course_id)
     await db.delete(skill)

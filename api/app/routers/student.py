@@ -594,14 +594,14 @@ async def download_material(
 
 @router.get("/courses/{course_id}/assessments")
 async def list_assessments(
-    course_id: str, skill_id: str | None = None, unit_id: str | None = None,
+    course_id: str, skill_id: str | None = None, topic_id: str | None = None, unit_id: str | None = None,
     student: User = Depends(require_student), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     await enrolled_course(course_id, student, db)
     query = select(Assessment).where(
         Assessment.course_id == course_id, Assessment.status == "published",
     )
-    if skill_id or unit_id:
+    if skill_id or topic_id or unit_id:
         linked = (
             select(AssessmentQuestion.assessment_id)
             .join(Question, Question.id == AssessmentQuestion.question_id)
@@ -609,9 +609,14 @@ async def list_assessments(
         )
         if skill_id:
             linked = linked.where(Question.skill_id == skill_id)
-        else:
+        if topic_id:
+            linked = linked.where(Question.topic_id == topic_id)
+        if unit_id:
             linked = linked.outerjoin(Skill, Skill.id == Question.skill_id).where(
                 or_(Question.unit_id == unit_id, Skill.unit_id == unit_id),
+            )
+            linked = linked.outerjoin(Topic, Topic.id == Question.topic_id).where(
+                or_(Question.unit_id == unit_id, Topic.unit_id == unit_id),
             )
         query = query.where(Assessment.id.in_(linked))
     assessments = (await db.execute(
@@ -645,12 +650,24 @@ async def list_assessments(
         skills = skills_by_assessment.setdefault(assessment_id, [])
         if not any(item["id"] == linked_skill_id for item in skills):
             skills.append({"id": linked_skill_id, "title": title})
+    topic_links = (await db.execute(
+        select(AssessmentQuestion.assessment_id, Topic.id, Topic.title)
+        .join(Question, Question.id == AssessmentQuestion.question_id)
+        .join(Topic, Topic.id == Question.topic_id)
+        .where(AssessmentQuestion.assessment_id.in_(assessment_ids), Question.status == "published")
+    )).all()
+    topics_by_assessment: dict[str, list[dict]] = {}
+    for assessment_id, linked_topic_id, title in topic_links:
+        topics = topics_by_assessment.setdefault(assessment_id, [])
+        if not any(item["id"] == linked_topic_id for item in topics):
+            topics.append({"id": linked_topic_id, "title": title})
     return [{
         "id": assessment.id, "title": assessment.title,
         "description": assessment.description, "kind": assessment.kind,
         "learning_technique": (assessment.settings or {}).get("learning_technique", "practice"),
         "question_count": counts.get(assessment.id, 0),
         "skills": skills_by_assessment.get(assessment.id, []),
+        "topics": topics_by_assessment.get(assessment.id, []),
     } for assessment in assessments]
 
 

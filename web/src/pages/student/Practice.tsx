@@ -22,13 +22,14 @@ export function StudentPracticePage() {
   const navigate = useNavigate()
   const toast = useToast()
   const skillId = searchParams.get('skill_id') || ''
+  const topicId = searchParams.get('topic_id') || ''
   const unitId = searchParams.get('unit_id') || ''
-  const filterQuery = skillId ? `?skill_id=${skillId}` : unitId ? `?unit_id=${unitId}` : ''
+  const filterQuery = skillId ? `?skill_id=${skillId}` : topicId ? `?topic_id=${topicId}` : unitId ? `?unit_id=${unitId}` : ''
 
   const path = useQuery({ queryKey: ['student-path', courseId], queryFn: () => api<PathData>(`/student/courses/${courseId}/path`) })
   const next = useQuery({ queryKey: ['student-next-activity', courseId], queryFn: () => api<NextActivity>(`/student/courses/${courseId}/next-activity`) })
   const assessments = useQuery({
-    queryKey: ['student-assessments', courseId, skillId, unitId],
+    queryKey: ['student-assessments', courseId, skillId, topicId, unitId],
     queryFn: () => api<PracticeAssessment[]>(`/student/courses/${courseId}/assessments${filterQuery}`),
   })
   const start = useMutation({
@@ -42,8 +43,9 @@ export function StudentPracticePage() {
 
   const units = path.data!.units
   const activeSkill = skillId ? units.flatMap((unit) => unit.skills).find((skill) => skill.id === skillId) : undefined
+  const activeTopic = topicId ? units.flatMap((unit) => unit.topics).find((topic) => topic.id === topicId) : undefined
   const activeUnit = unitId ? units.find((unit) => unit.id === unitId) : undefined
-  const filtering = Boolean(skillId || unitId)
+  const filtering = Boolean(skillId || topicId || unitId)
   const activity = next.data!.activity
   const skills = units.flatMap((unit) => unit.skills.map((skill) => ({ ...skill, unitTitle: unit.title })))
   const available = assessments.data!.filter((item) => item.kind !== 'transfer' && item.learning_technique !== 'spaced_repetition')
@@ -64,7 +66,7 @@ export function StudentPracticePage() {
     {filtering && <Card className="practice-filter">
       <div>
         <span className="muted-text text-small">Filtrando actividades por</span>
-        <strong>{activeSkill?.title || activeUnit?.title || 'tu selección'}</strong>
+        <strong>{activeSkill?.title || activeTopic?.title || activeUnit?.title || 'tu selección'}</strong>
         {activeUnit && !activeSkill && <small className="muted-text">Unidad {activeUnit.position}</small>}
       </div>
       <Button variant="outline" size="small" onClick={clearFilter}><X size={14} />Quitar filtro</Button>
@@ -119,6 +121,7 @@ export function StudentPracticePage() {
             <strong>{assessment.title}</strong>
             <p className="muted-text text-small">{assessment.description || 'Responde y revisa qué conceptos conviene practicar.'}</p>
             {!!assessment.skills.length && <div className="topic-chips">{assessment.skills.slice(0, 4).map((skill) => <span className="topic-chip" key={skill.id}><Target size={12} />{skill.title}</span>)}</div>}
+            {!!assessment.topics?.length && <div className="topic-chips">{assessment.topics.slice(0, 4).map((topic) => <span className="topic-chip" key={topic.id}>{topic.title}</span>)}</div>}
           </div>
           <Button disabled={start.isPending} onClick={() => start.mutate(assessment.id)}>{start.isPending ? 'Preparando…' : 'Comenzar'}<ArrowRight size={15} /></Button>
         </div>)}</div></div>
