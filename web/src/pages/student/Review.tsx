@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, BookOpen, CheckCircle2, Eye, Repeat2, Sparkles } from 'lucide-react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { api, jsonBody } from '../../api'
 import { Badge, Button, Card, EmptyState, ErrorState, LoadingState, PageHeader, useToast } from '../../components/ui'
-import type { PathData } from './types'
+import type { PathData, PracticeAssessment } from './types'
 
 type ProgressReview = { skill_id: string; due_at: string; interval_days: number; repetitions: number }
 type ProgressSkill = { skill_id: string; skill: string; unit: string; probability: number; observations: number }
@@ -31,11 +31,18 @@ function formatDate(value: string) {
 export function StudentReviewPage() {
   const { courseId = '' } = useParams()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const toast = useToast()
   const [index, setIndex] = useState(0)
   const [revealed, setRevealed] = useState(false)
   const progress = useQuery({ queryKey: ['student-progress', courseId], queryFn: () => api<ReviewProgress>(`/student/courses/${courseId}/progress`) })
   const path = useQuery({ queryKey: ['student-path', courseId], queryFn: () => api<PathData>(`/student/courses/${courseId}/path`) })
+  const assessments = useQuery({ queryKey: ['student-assessments', courseId], queryFn: () => api<PracticeAssessment[]>(`/student/courses/${courseId}/assessments`) })
+  const startAssessment = useMutation({
+    mutationFn: (assessmentId: string) => api<{ id: string }>(`/student/assessments/${assessmentId}/attempts`, { method: 'POST' }),
+    onSuccess: (attempt) => navigate(`/student/attempts/${attempt.id}`),
+    onError: (error) => toast(error.message, 'error'),
+  })
   const rate = useMutation({
     mutationFn: ({ skillId, rating }: { skillId: string; rating: number }) => api(`/student/reviews/${skillId}/rate?course_id=${courseId}`, { method: 'POST', body: jsonBody({ rating }) }),
     onSuccess: async () => {
@@ -46,8 +53,8 @@ export function StudentReviewPage() {
     },
     onError: (error) => toast(error.message, 'error'),
   })
-  if (progress.isLoading || path.isLoading) return <LoadingState />
-  if (progress.isError || path.isError) return <ErrorState message="No pudimos cargar tus repasos." retry={() => { void progress.refetch(); void path.refetch() }} />
+  if (progress.isLoading || path.isLoading || assessments.isLoading) return <LoadingState />
+  if (progress.isError || path.isError || assessments.isError) return <ErrorState message="No pudimos cargar tus repasos." retry={() => { void progress.refetch(); void path.refetch(); void assessments.refetch() }} />
 
   const now = new Date()
   const reviews = [...progress.data!.reviews]
@@ -59,9 +66,12 @@ export function StudentReviewPage() {
   const currentSkill = current ? pathSkills.get(current.skill_id) : undefined
   const currentMastery = current ? mastery.get(current.skill_id) : undefined
   const finished = reviews.length > 0 && index >= reviews.length
+  const generatedReviews = assessments.data!.filter((item) => item.learning_technique === 'spaced_repetition')
 
   return <div className="student-view">
     <PageHeader title="Repaso espaciado" description="Recupera la idea antes de mirar tus apuntes. La valoración de tu recuerdo define cuándo volverá a aparecer." />
+
+    {!!generatedReviews.length && <Card><div className="card-heading"><h2>Actividades de repaso</h2><p className="muted-text text-small">Actividades publicadas por tu docente para recuperar conocimientos entre repasos programados.</p></div><div className="card-content practice-list">{generatedReviews.map((activity) => <div className="practice-row" key={activity.id}><span className="practice-row-icon"><Repeat2 size={18} /></span><div className="practice-row-copy"><strong>{activity.title}</strong><p className="muted-text text-small">{activity.description || `${activity.question_count} preguntas del curso`}</p></div><Button disabled={startAssessment.isPending} onClick={() => startAssessment.mutate(activity.id)}>Comenzar<ArrowRight size={15} /></Button></div>)}</div></Card>}
 
     {!reviews.length ? <Card><EmptyState icon={Repeat2} title="Todo al día" description="No tienes repasos pendientes. Los repasos se programan después de cada evidencia de aprendizaje." action={<Link className="button button-outline" to={`/student/courses/${courseId}/practice`}>Ir a práctica<ArrowRight size={15} /></Link>} /></Card>
       : finished ? <Card><div className="review-finished"><span className="review-finished-icon"><CheckCircle2 size={26} /></span><h2>Repasos completados</h2><p className="muted-text">Terminaste los {reviews.length} repasos pendientes de hoy. Los intervalos se actualizaron según tu valoración.</p><div className="review-finished-actions"><Link className="button" to={`/student/courses/${courseId}/practice`}>Seguir practicando</Link><Link className="button button-outline" to={`/student/courses/${courseId}/progress`}>Ver mi progreso</Link></div></div></Card>

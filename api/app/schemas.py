@@ -130,7 +130,6 @@ class UnitIn(BaseModel):
     title: str = Field(min_length=2, max_length=200)
     outcome: str = Field(default="", max_length=5000)
     position: int = Field(default=0, ge=0)
-    weeks: str = Field(default="", max_length=80)
     hours: int = Field(default=0, ge=0, le=10000)
 
     @field_validator("title")
@@ -287,6 +286,7 @@ class AssessmentCreate(BaseModel):
 class AssessmentUpdate(BaseModel):
     title: str = Field(min_length=2, max_length=200)
     description: str = Field(default="", max_length=5000)
+    instructions: str = Field(default="", max_length=5000)
 
     @field_validator("title")
     @classmethod
@@ -321,6 +321,8 @@ class PracticeGenerationIn(BaseModel):
 class CourseActivitiesGenerationIn(BaseModel):
     evaluation_count: int = Field(default=2, ge=0, le=10)
     practice_count: int = Field(default=2, ge=0, le=10)
+    spaced_repetition_count: int = Field(default=0, ge=0, le=10)
+    transfer_count: int = Field(default=0, ge=0, le=10)
     question_count: int = Field(default=6, ge=1, le=12)
     question_types: list[str] = Field(default_factory=lambda: ["multiple_choice", "open"], min_length=1, max_length=2)
 
@@ -330,6 +332,12 @@ class CourseActivitiesGenerationIn(BaseModel):
         if any(item not in {"multiple_choice", "open"} for item in value):
             raise ValueError("Question types must be multiple_choice or open")
         return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def validate_activity_total(self) -> "CourseActivitiesGenerationIn":
+        if self.evaluation_count + self.practice_count + self.spaced_repetition_count + self.transfer_count > 20:
+            raise ValueError("Generate no more than 20 activities at a time")
+        return self
 
 
 class GeneratedQuestion(BaseModel):
@@ -429,6 +437,37 @@ class GeneratedPracticeAssessment(BaseModel):
     description: str = Field(default="", max_length=5000)
     instructions: str = Field(default="", max_length=5000)
     questions: list[GeneratedQuestion] = Field(min_length=1, max_length=12)
+
+
+class UnitContentGenerationIn(BaseModel):
+    topic_count: int = Field(default=4, ge=1, le=20)
+    skill_count: int = Field(default=4, ge=1, le=20)
+
+
+class GeneratedUnitTopic(BaseModel):
+    title: str = Field(min_length=2, max_length=240)
+    source_ids: list[str] = Field(min_length=1, max_length=8)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        return uppercase_required_name(value)
+
+
+class GeneratedUnitSkill(BaseModel):
+    title: str = Field(min_length=2, max_length=240)
+    description: str = Field(default="", max_length=5000)
+    source_ids: list[str] = Field(min_length=1, max_length=8)
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str) -> str:
+        return uppercase_required_name(value)
+
+
+class GeneratedUnitContent(BaseModel):
+    topics: list[GeneratedUnitTopic] = Field(min_length=1, max_length=20)
+    skills: list[GeneratedUnitSkill] = Field(min_length=1, max_length=20)
 
 
 class AssessmentQuestionIn(BaseModel):

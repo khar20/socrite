@@ -117,21 +117,27 @@ class Unit(Base):
 
 class Topic(Base):
     __tablename__ = "unit_topics"
+    __table_args__ = (CheckConstraint("status IN ('draft', 'published')", name="ck_unit_topics_status"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     unit_id: Mapped[str] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(240))
     position: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="draft", server_default="draft")
+    source_refs: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
 
 
 class Skill(Base):
     __tablename__ = "skills"
+    __table_args__ = (CheckConstraint("status IN ('draft', 'published')", name="ck_skills_status"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     unit_id: Mapped[str] = mapped_column(ForeignKey("units.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(240))
     description: Mapped[str] = mapped_column(Text, default="")
     position: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="draft", server_default="draft")
+    source_refs: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
 
 
 class CourseMember(Base):

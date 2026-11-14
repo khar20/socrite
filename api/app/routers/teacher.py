@@ -469,6 +469,7 @@ async def update_assessment(
         raise HTTPException(status_code=409, detail="Only draft assessments can be edited")
     assessment.title = data.title
     assessment.description = data.description
+    assessment.settings = {**(assessment.settings or {}), "instructions": data.instructions}
     record_event(db, teacher.id, "assessment.updated", "assessment", assessment.id, assessment.course_id)
     await db.commit()
     return {"id": assessment.id, **data.model_dump(), "status": assessment.status}
@@ -554,6 +555,14 @@ async def publish_assessment(
     ) or 0
     if unpublished:
         raise HTTPException(status_code=409, detail="Publish all attached questions before publishing the assessment")
+    unapproved_skills = await db.scalar(
+        select(func.count(AssessmentQuestion.id))
+        .join(Question, Question.id == AssessmentQuestion.question_id)
+        .join(Skill, Skill.id == Question.skill_id)
+        .where(AssessmentQuestion.assessment_id == assessment.id, Skill.status != "published")
+    ) or 0
+    if unapproved_skills:
+        raise HTTPException(status_code=409, detail="Approve all linked skills before publishing this activity")
     assessment.status = "published"
     assessment.published_at = datetime.now(UTC)
     record_event(db, teacher.id, "assessment.published", "assessment", assessment.id,

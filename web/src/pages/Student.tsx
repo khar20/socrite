@@ -20,6 +20,7 @@ type StudentCoursesPage = PageResult<StudentCourse> & {
 }
 type AssessmentAttempt = {
   id: string; assessment_id: string; course_id: string; status: string; attempt_number: number
+  assessment: { title: string; description: string; instructions: string; kind: string } | null
   score: number | null; possible_score: number | null; submitted_at: string | null; questions: AttemptQuestion[]
 }
 type AnswerResult = { question_id: string; is_correct: boolean | null; pending_review: boolean; suggested_score: number | null }
@@ -268,6 +269,8 @@ export function StudentAttemptPage() {
       </div>
     </div>
     <div className="attempt-progress"><div className="progress-track"><i style={{ width: `${Math.round(answered / data.questions.length * 100)}%` }} /></div></div>
+
+    {data.assessment && <header className="page-header"><div><h1>{data.assessment.title}</h1>{data.assessment.description && <p className="muted-text">{data.assessment.description}</p>}{data.assessment.instructions && <p className="muted-text text-small">{data.assessment.instructions}</p>}</div></header>}
 
     <Card className="attempt-card"><div className="card-content attempt-body">
       <Badge>{reviewedQuestion.question_type === 'open' ? 'Respuesta abierta' : reviewedQuestion.question_type === 'numeric' ? 'Respuesta numérica' : 'Opción múltiple'}</Badge>

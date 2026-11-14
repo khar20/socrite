@@ -1,14 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai import AIProviderError, generate_question
+from app.ai import AIProviderError, generate_question, generate_unit_content
 from app.auth import require_teacher
 from app.config import settings
 from app.db import get_db
-from app.models import Material, MaterialChunk, Question, Unit, User
+from app.models import Material, MaterialChunk, Question, Skill, Topic, Unit, User
 from app.routers.courses import owned_course
-from app.schemas import CourseActivitiesGenerationIn, PracticeGenerationIn
+from app.schemas import (
+    CourseActivitiesGenerationIn,
+    GeneratedUnitContent,
+    PracticeGenerationIn,
+    UnitContentGenerationIn,
+)
 from app.services.audit import record_event
 from app.services.generation import create_practice_assessment
 
@@ -22,40 +27,139 @@ async def generate_course_activities(
 ) -> dict:
     course = await owned_course(course_id, teacher, db)
     if course.status == "archived":
-        raise HTTPException(status_code=409, detail="Archived courses cannot receive assessments")
+        raise HTTPException(status_code=409, detail="No se pueden agregar actividades a un curso archivado.")
     if not settings.ai_configured:
-        raise HTTPException(status_code=503, detail="Configure OpenRouter to generate course activities")
-    if data.evaluation_count + data.practice_count == 0:
-        raise HTTPException(status_code=422, detail="Choose at least one evaluation or practice")
+        raise HTTPException(status_code=503, detail="Configura OpenRouter para generar actividades del curso.")
+    counts = [data.evaluation_count, data.practice_count, data.spaced_repetition_count, data.transfer_count]
+    if sum(counts) == 0:
+        raise HTTPException(status_code=422, detail="Elige al menos una actividad para generar.")
     materials = (await db.execute(select(Material).where(
         Material.course_id == course_id, Material.status == "ready", Material.chunk_count > 0,
     ).order_by(Material.created_at))).scalars().all()
     if not materials:
-        raise HTTPException(status_code=409, detail="Process uploaded course materials before generating activities")
+        raise HTTPException(status_code=409, detail="Procesa materiales del curso antes de generar actividades.")
     units = (await db.execute(select(Unit).where(Unit.course_id == course_id).order_by(Unit.position))).scalars().all()
     activities = []
-    total = data.evaluation_count + data.practice_count
+    activity_kinds = (
+        [("quiz", "assessment")] * data.evaluation_count
+        + [("practice", "practice")] * data.practice_count
+        + [("practice", "spaced_repetition")] * data.spaced_repetition_count
+        + [("transfer", "transfer")] * data.transfer_count
+    )
     try:
-        for index in range(total):
+        for index, (kind, technique) in enumerate(activity_kinds):
             material = materials[index % len(materials)]
             chunks = (await db.execute(select(MaterialChunk).where(
                 MaterialChunk.material_id == material.id,
             ).order_by(MaterialChunk.chunk_index))).scalars().all()
             unit = next((item for item in units if item.id == material.unit_id), None)
-            is_evaluation = index < data.evaluation_count
             assessment, questions = await create_practice_assessment(
                 db, course=course, material=material, chunks=list(chunks), unit=unit,
                 actor_id=teacher.id, question_count=data.question_count,
                 question_types=data.question_types, focus="",
-                kind="quiz" if is_evaluation else "practice",
+                kind=kind,
+                technique=technique,
+                commit=False,
             )
             activities.append({"id": assessment.id, "kind": assessment.kind,
                                "question_count": len(questions)})
     except AIProviderError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        await db.rollback()
+        raise HTTPException(status_code=502, detail=f"No se pudieron generar las actividades: {exc}") from exc
     except ValueError as exc:
+        await db.rollback()
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    await db.commit()
     return {"activities": activities}
+
+
+@router.post("/courses/{course_id}/units/{unit_id}/generate-content", status_code=201)
+async def generate_unit_curriculum(
+    course_id: str, unit_id: str, data: UnitContentGenerationIn,
+    teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> dict:
+    course = await owned_course(course_id, teacher, db)
+    if course.status == "archived":
+        raise HTTPException(status_code=409, detail="No se puede agregar contenido a un curso archivado.")
+    unit = await db.scalar(select(Unit).where(Unit.id == unit_id, Unit.course_id == course_id))
+    if unit is None:
+        raise HTTPException(status_code=404, detail="Unit not found")
+    if not settings.ai_configured:
+        raise HTTPException(status_code=503, detail="Configura el proveedor de IA para generar contenido del curso.")
+    rows = (await db.execute(
+        select(Material, MaterialChunk)
+        .join(MaterialChunk, MaterialChunk.material_id == Material.id)
+        .where(Material.course_id == course_id, Material.status == "ready")
+        .order_by(Material.created_at, MaterialChunk.chunk_index)
+    )).all()
+    if not rows:
+        raise HTTPException(status_code=409, detail="Procesa materiales del curso antes de generar contenido.")
+
+    sources = []
+    source_map = {}
+    total_chars = 0
+    for material, chunk in rows:
+        source_id = f"S{len(source_map) + 1}"
+        block = (
+            f"[{source_id}] MATERIAL: {material.name} | PÁGINA: "
+            f"{chunk.page_number if chunk.page_number is not None else '—'}\n{chunk.content.strip()}"
+        )
+        if sources and total_chars + len(block) > 32000:
+            break
+        source_map[source_id] = (material, chunk)
+        sources.append(block)
+        total_chars += len(block) + 2
+    try:
+        payload = await generate_unit_content(
+            course.description, "\n\n".join(sources), data.topic_count, data.skill_count,
+        )
+        generated = GeneratedUnitContent.model_validate(payload)
+        if len(generated.topics) < data.topic_count or len(generated.skills) < data.skill_count:
+            raise ValueError("The AI returned fewer curriculum items than requested")
+    except AIProviderError as exc:
+        raise HTTPException(status_code=502, detail=f"No se pudo generar el contenido de la unidad: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="La IA devolvió contenido incompleto o no válido para la unidad.") from exc
+
+    items = []
+    topic_offset = await db.scalar(select(func.count(Topic.id)).where(Topic.unit_id == unit.id)) or 0
+    for entry in generated.topics[:data.topic_count]:
+        refs = []
+        for source_id in dict.fromkeys(entry.source_ids):
+            source = source_map.get(source_id)
+            if source is None:
+                raise HTTPException(status_code=502, detail="La IA citó una fuente que no pertenece a estos materiales.")
+            material, chunk = source
+            refs.append({"material_id": material.id, "material_name": material.name,
+                         "page_number": chunk.page_number, "chunk_index": chunk.chunk_index,
+                         "excerpt": chunk.content.strip()[:320]})
+        topic = Topic(unit_id=unit.id, title=entry.title.upper(), position=topic_offset + len(items),
+            status="draft", source_refs=refs)
+        db.add(topic)
+        items.append({"type": "topic", "title": topic.title, "status": topic.status})
+    skill_offset = await db.scalar(select(func.count(Skill.id)).where(Skill.unit_id == unit.id)) or 0
+    for index, entry in enumerate(generated.skills[:data.skill_count]):
+        refs = []
+        for source_id in dict.fromkeys(entry.source_ids):
+            source = source_map.get(source_id)
+            if source is None:
+                raise HTTPException(status_code=502, detail="La IA citó una fuente que no pertenece a estos materiales.")
+            material, chunk = source
+            refs.append({"material_id": material.id, "material_name": material.name,
+                         "page_number": chunk.page_number, "chunk_index": chunk.chunk_index,
+                         "excerpt": chunk.content.strip()[:320]})
+        skill = Skill(unit_id=unit.id, title=entry.title.upper(), description=entry.description,
+                      position=skill_offset + index, status="draft", source_refs=refs)
+        db.add(skill)
+        items.append({"type": "skill", "title": skill.title, "status": skill.status})
+    if not items:
+        raise HTTPException(status_code=502, detail="La IA no devolvió contenido para la unidad.")
+    await db.flush()
+    record_event(db, teacher.id, "unit.content.generated", "unit", unit.id, course_id,
+                 {"topics": len(generated.topics[:data.topic_count]),
+                  "skills": len(generated.skills[:data.skill_count])})
+    await db.commit()
+    return {"items": items}
 
 
 @router.post("/courses/{course_id}/materials/{material_id}/generate-question", status_code=201)

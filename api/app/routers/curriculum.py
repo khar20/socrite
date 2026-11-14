@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import require_teacher
 from app.db import get_db
-from app.models import Course, Skill, Topic, Unit, User
+from app.models import Assessment, AssessmentQuestion, Course, Question, Skill, Topic, Unit, User
 from app.routers.courses import owned_course
 from app.schemas import SkillIn, SkillUpdate, TopicIn, TopicUpdate, UnitIn
 from app.services.audit import record_event
@@ -44,11 +44,13 @@ async def get_curriculum(
         topics = (await db.execute(select(Topic).where(Topic.unit_id == unit.id).order_by(Topic.position))).scalars().all()
         skills = (await db.execute(select(Skill).where(Skill.unit_id == unit.id).order_by(Skill.position))).scalars().all()
         items.append({"id": unit.id, "course_id": course_id, "title": unit.title,
-                      "outcome": unit.outcome, "position": unit.position, "weeks": unit.weeks,
+                      "outcome": unit.outcome, "position": unit.position,
                       "hours": unit.hours,
-                      "topics": [{"id": x.id, "title": x.title, "position": x.position} for x in topics],
+                      "topics": [{"id": x.id, "title": x.title, "position": x.position,
+                                  "status": x.status, "source_refs": x.source_refs} for x in topics],
                       "skills": [{"id": x.id, "title": x.title, "description": x.description,
-                                  "position": x.position} for x in skills]})
+                                  "position": x.position, "status": x.status,
+                                  "source_refs": x.source_refs} for x in skills]})
     return items
 
 
@@ -57,7 +59,7 @@ async def create_unit(
     course_id: str, data: UnitIn, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
 ) -> dict:
     await owned_course(course_id, teacher, db)
-    unit = Unit(course_id=course_id, **data.model_dump())
+    unit = Unit(course_id=course_id, weeks="", **data.model_dump())
     db.add(unit)
     await db.flush()
     record_event(db, teacher.id, "unit.created", "unit", unit.id, course_id)
@@ -100,7 +102,8 @@ async def create_topic(
     await db.flush()
     record_event(db, teacher.id, "topic.created", "topic", topic.id, unit.course_id)
     await db.commit()
-    return {"id": topic.id, "unit_id": unit_id, **data.model_dump()}
+    return {"id": topic.id, "unit_id": unit_id, **data.model_dump(),
+            "status": topic.status, "source_refs": topic.source_refs}
 
 
 @router.post("/units/{unit_id}/skills", status_code=201)
@@ -113,7 +116,8 @@ async def create_skill(
     await db.flush()
     record_event(db, teacher.id, "skill.created", "skill", skill.id, unit.course_id)
     await db.commit()
-    return {"id": skill.id, "unit_id": unit_id, **data.model_dump()}
+    return {"id": skill.id, "unit_id": unit_id, **data.model_dump(),
+            "status": skill.status, "source_refs": skill.source_refs}
 
 
 @router.patch("/topics/{topic_id}")
@@ -124,10 +128,24 @@ async def update_topic(
     topic = await owned_entry(Topic, topic_id, teacher, db)
     for key, value in data.model_dump().items():
         setattr(topic, key, value)
+    topic.status = "draft"
     unit = await db.get(Unit, topic.unit_id)
     record_event(db, teacher.id, "topic.updated", "topic", topic.id, unit.course_id)
     await db.commit()
-    return {"id": topic.id, "unit_id": topic.unit_id, **data.model_dump()}
+    return {"id": topic.id, "unit_id": topic.unit_id, **data.model_dump(),
+            "status": topic.status, "source_refs": topic.source_refs}
+
+
+@router.patch("/topics/{topic_id}/publish")
+async def publish_topic(
+    topic_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> dict:
+    topic = await owned_entry(Topic, topic_id, teacher, db)
+    topic.status = "published"
+    unit = await db.get(Unit, topic.unit_id)
+    record_event(db, teacher.id, "topic.published", "topic", topic.id, unit.course_id)
+    await db.commit()
+    return {"id": topic.id, "status": topic.status}
 
 
 @router.delete("/topics/{topic_id}", status_code=204)
@@ -148,12 +166,37 @@ async def update_skill(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     skill = await owned_entry(Skill, skill_id, teacher, db)
+    published_activities = await db.scalar(
+        select(func.count(AssessmentQuestion.id))
+        .join(Question, Question.id == AssessmentQuestion.question_id)
+        .join(Assessment, Assessment.id == AssessmentQuestion.assessment_id)
+        .where(Question.skill_id == skill.id, Assessment.status == "published")
+    ) or 0
+    if published_activities:
+        raise HTTPException(
+            status_code=409,
+            detail="This skill is used by a published activity. Create a revised skill or archive the activity before editing it.",
+        )
     for key, value in data.model_dump().items():
         setattr(skill, key, value)
+    skill.status = "draft"
     unit = await db.get(Unit, skill.unit_id)
     record_event(db, teacher.id, "skill.updated", "skill", skill.id, unit.course_id)
     await db.commit()
-    return {"id": skill.id, "unit_id": skill.unit_id, **data.model_dump()}
+    return {"id": skill.id, "unit_id": skill.unit_id, **data.model_dump(),
+            "status": skill.status, "source_refs": skill.source_refs}
+
+
+@router.patch("/skills/{skill_id}/publish")
+async def publish_skill(
+    skill_id: str, teacher: User = Depends(require_teacher), db: AsyncSession = Depends(get_db),
+) -> dict:
+    skill = await owned_entry(Skill, skill_id, teacher, db)
+    skill.status = "published"
+    unit = await db.get(Unit, skill.unit_id)
+    record_event(db, teacher.id, "skill.published", "skill", skill.id, unit.course_id)
+    await db.commit()
+    return {"id": skill.id, "status": skill.status}
 
 
 @router.delete("/skills/{skill_id}", status_code=204)

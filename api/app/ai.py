@@ -124,6 +124,7 @@ async def generate_practice_assessment(
     question_count: int,
     question_types: list[str],
     focus: str = "",
+    technique: str = "practice",
 ) -> dict:
     type_guidance = []
     if "multiple_choice" in question_types:
@@ -135,9 +136,18 @@ async def generate_practice_assessment(
         type_guidance.append(
             "open: sin opciones ni answer_key; incluye una rúbrica de 2 a 4 criterios observables."
         )
+    technique_guidance = {
+        "practice": "Diseña práctica de recuperación activa.",
+        "spaced_repetition": "Diseña preguntas breves de recuperación activa apropiadas para repaso espaciado.",
+        "transfer": (
+            "Diseña problemas de transferencia que pidan aplicar lo aprendido a una situación distinta. "
+            "La situación y todos sus datos deben derivarse exclusivamente de las fuentes; no agregues hechos ni supuestos."
+        ),
+        "assessment": "Diseña una evaluación clara que mida los contenidos descritos en las fuentes.",
+    }.get(technique, "Diseña práctica de recuperación activa.")
     system = (
         "Eres un docente universitario que diseña evaluaciones de práctica en español. "
-        "Trabaja exclusivamente con las FUENTES numeradas que recibirás. No uses conocimiento externo, "
+        "Trabaja exclusivamente con la descripción del curso y las FUENTES numeradas que recibirás. No uses conocimiento externo, "
         "suposiciones ni contenido inventado. Si una pregunta no puede sustentarse en las fuentes, no la incluyas. "
         "No inventes cifras, dosis, tiempos, porcentajes, nombres ni procedimientos que no aparezcan textualmente. "
         "Cada pregunta debe ser autónoma y comprensible sin leer las fuentes. "
@@ -145,9 +155,10 @@ async def generate_practice_assessment(
     )
     user = (
         f"CONTEXTO DEL CURSO:\n{course_context[:6000]}\n\n"
+        f"TIPO DE ACTIVIDAD: {technique}. {technique_guidance}\n"
         f"TEMA DE LA PRÁCTICA: {theme}\n"
         f"ENFOQUE ADICIONAL: {focus.strip() or 'ninguno'}\n"
-        f"CANTIDAD DE PREGUNTAS: {question_count}\n"
+        f"CANTIDAD DE PREGUNTAS: exactamente {question_count}\n"
         f"TIPOS PERMITIDOS: {', '.join(question_types)}\n\n"
         f"REGLAS DE FORMATO:\n- {'; '.join(type_guidance)}\n"
         "- Cada pregunta debe incluir source_ids con los identificadores [S1], [S2], etc. que la sustentan.\n"
@@ -187,6 +198,41 @@ async def generate_practice_assessment(
     if not isinstance(result, dict):
         raise AIProviderError("The AI provider returned an invalid assessment response")
     return result
+
+
+async def generate_unit_content(
+    course_description: str, sources: str, topic_count: int, skill_count: int,
+) -> dict:
+    data = await request_ai("chat/completions", {
+        "model": settings.ai_chat_model,
+        "temperature": 0.2,
+        "max_tokens": 4096,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": (
+                "Eres un diseñador curricular universitario. Usa exclusivamente la descripción del curso y las fuentes "
+                "numeradas. No añadas conocimiento externo, supuestos, ejemplos ni habilidades que no puedan sustentarse "
+                "en esos textos. Escribe en español, de forma concreta y observable. Devuelve solo JSON válido."
+            )},
+            {"role": "user", "content": (
+                f"DESCRIPCIÓN DEL CURSO:\n{course_description[:6000]}\n\nFUENTES:\n{sources}\n\n"
+                f"Genera exactamente {topic_count} temas y exactamente {skill_count} habilidades relacionadas. "
+                "Cada habilidad incluye una descripción observable. Cada elemento debe incluir source_ids con una o más "
+                "fuentes que lo respalden; usa solo los IDs listados. Devuelve exactamente: "
+                '{"topics":[{"title":"...","source_ids":["S1"]}],'
+                '"skills":[{"title":"...","description":"...","source_ids":["S1"]}]}'
+            )},
+        ],
+    })
+    try:
+        content = data["choices"][0]["message"]["content"]
+        if isinstance(content, str):
+            result = json.loads(content.strip().removeprefix("```json").removesuffix("```").strip())
+            if isinstance(result, dict):
+                return result
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
+        raise AIProviderError("The AI provider returned invalid curriculum content") from exc
+    raise AIProviderError("The AI provider returned invalid curriculum content")
 
 
 async def generate_tutor_hint(messages: list[dict], skill: str, reference: str,

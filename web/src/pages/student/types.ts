@@ -108,6 +108,7 @@ export type PracticeAssessment = {
   title: string
   description: string
   kind: 'diagnostic' | 'practice' | 'quiz' | 'transfer' | string
+  learning_technique?: string
   question_count: number
   skills: { id: string; title: string }[]
 }

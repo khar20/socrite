@@ -76,6 +76,8 @@ async def create_practice_assessment(
     question_types: list[str],
     focus: str,
     kind: str = "practice",
+    technique: str | None = None,
+    commit: bool = True,
 ) -> tuple[Assessment, list[Question]]:
     theme = practice_theme(material)
     source_map, sources = build_sources(material, chunks)
@@ -89,11 +91,14 @@ async def create_practice_assessment(
         question_count,
         question_types,
         focus,
+        technique or ("transfer" if kind == "transfer" else "assessment" if kind == "quiz" else "practice"),
     )
     try:
         generated = GeneratedPracticeAssessment.model_validate(payload)
     except ValidationError as exc:
         raise ValueError("La IA devolvió una evaluación incompleta o con formato inválido.") from exc
+    if len(generated.questions) < question_count:
+        raise ValueError("La IA generó menos preguntas de las solicitadas.")
 
     prepared: list[tuple[QuestionCreate, list[dict]]] = []
     for item in generated.questions[:question_count]:
@@ -125,7 +130,10 @@ async def create_practice_assessment(
     if not prepared:
         raise ValueError("La IA no devolvió preguntas fundamentadas.")
 
-    title_prefix = "EVALUACIÓN" if kind == "quiz" else "PRÁCTICA"
+    title_prefix = {
+        "quiz": "EVALUACIÓN",
+        "transfer": "PROBLEMA DE TRANSFERENCIA",
+    }.get(kind, "PRÁCTICA")
     title = f"{title_prefix}: {theme.upper()}"[:200]
     description = generated.description.strip()
     instructions = generated.instructions.strip() or (
@@ -138,6 +146,7 @@ async def create_practice_assessment(
     ))
     assessment_settings = {
         "practice": True,
+        "learning_technique": technique or ("transfer" if kind == "transfer" else "assessment" if kind == "quiz" else "practice"),
         "theme": theme,
         "instructions": instructions,
         "question_count": len(prepared),
@@ -207,5 +216,6 @@ async def create_practice_assessment(
             "chunk_count": len(source_map),
         },
     )
-    await db.commit()
+    if commit:
+        await db.commit()
     return assessment, questions

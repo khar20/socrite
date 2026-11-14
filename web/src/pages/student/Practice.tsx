@@ -110,7 +110,7 @@ export function StudentPracticePage() {
           <span className="practice-row-icon"><ClipboardCheck size={18} /></span>
           <div className="practice-row-copy">
             <div className="practice-row-heading">
-              <Badge tone={assessment.kind === 'diagnostic' ? 'info' : assessment.kind === 'transfer' ? 'warning' : 'neutral'}>{KIND_LABELS[assessment.kind] || 'Práctica'}</Badge>
+              <Badge tone={assessment.learning_technique === 'spaced_repetition' ? 'info' : assessment.kind === 'diagnostic' ? 'info' : assessment.kind === 'transfer' ? 'warning' : 'neutral'}>{assessment.learning_technique === 'spaced_repetition' ? 'Repaso espaciado' : KIND_LABELS[assessment.kind] || 'Práctica'}</Badge>
               <Badge>{assessment.question_count} {assessment.question_count === 1 ? 'pregunta' : 'preguntas'}</Badge>
             </div>
             <strong>{assessment.title}</strong>

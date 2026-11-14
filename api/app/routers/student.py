@@ -182,7 +182,7 @@ async def recommend_activity(course_id: str, student: User, db: AsyncSession) ->
     now = datetime.now(UTC)
     skills = (await db.execute(
         select(Skill, Unit).join(Unit, Unit.id == Skill.unit_id)
-        .where(Unit.course_id == course_id).order_by(Unit.position, Skill.position)
+        .where(Unit.course_id == course_id, Skill.status == "published").order_by(Unit.position, Skill.position)
     )).all()
     if not skills:
         return {"skill": None, "activity": None, "reason": "Tu docente aún no ha publicado habilidades."}
@@ -337,7 +337,7 @@ async def learning_home(
     )).scalars().all()
     skills = (await db.execute(
         select(Skill, Unit).join(Unit, Unit.id == Skill.unit_id)
-        .where(Unit.course_id == course_id).order_by(Unit.position, Skill.position)
+        .where(Unit.course_id == course_id, Skill.status == "published").order_by(Unit.position, Skill.position)
     )).all()
     skill_ids = [skill.id for skill, _ in skills]
     mastery_rows = (await db.execute(select(StudentSkillMastery).where(
@@ -422,10 +422,10 @@ async def learning_path(
         return {"course": {"id": course.id, "title": course.title, "code": course.code}, "units": []}
     unit_ids = [unit.id for unit in units]
     topics = (await db.execute(
-        select(Topic).where(Topic.unit_id.in_(unit_ids)).order_by(Topic.position)
+        select(Topic).where(Topic.unit_id.in_(unit_ids), Topic.status == "published").order_by(Topic.position)
     )).scalars().all()
     skills = (await db.execute(
-        select(Skill).where(Skill.unit_id.in_(unit_ids)).order_by(Skill.position)
+        select(Skill).where(Skill.unit_id.in_(unit_ids), Skill.status == "published").order_by(Skill.position)
     )).scalars().all()
     skill_ids = [skill.id for skill in skills]
     mastery_rows = (await db.execute(select(StudentSkillMastery).where(
@@ -513,8 +513,12 @@ async def get_curriculum(
     if not units:
         return []
     unit_ids = [unit.id for unit in units]
-    topics = (await db.execute(select(Topic).where(Topic.unit_id.in_(unit_ids)).order_by(Topic.position))).scalars().all()
-    skills = (await db.execute(select(Skill).where(Skill.unit_id.in_(unit_ids)).order_by(Skill.position))).scalars().all()
+    topics = (await db.execute(select(Topic).where(
+        Topic.unit_id.in_(unit_ids), Topic.status == "published",
+    ).order_by(Topic.position))).scalars().all()
+    skills = (await db.execute(select(Skill).where(
+        Skill.unit_id.in_(unit_ids), Skill.status == "published",
+    ).order_by(Skill.position))).scalars().all()
     topics_by_unit: dict[str, list[Topic]] = {}
     skills_by_unit: dict[str, list[Skill]] = {}
     for topic in topics:
@@ -523,7 +527,7 @@ async def get_curriculum(
         skills_by_unit.setdefault(skill.unit_id, []).append(skill)
     return [{
         "id": unit.id, "course_id": course_id, "title": unit.title, "outcome": unit.outcome,
-        "position": unit.position, "weeks": unit.weeks, "hours": unit.hours,
+        "position": unit.position, "hours": unit.hours,
         "topics": [{"id": topic.id, "title": topic.title, "position": topic.position}
                    for topic in topics_by_unit.get(unit.id, [])],
         "skills": [{"id": skill.id, "title": skill.title, "description": skill.description,
@@ -644,6 +648,7 @@ async def list_assessments(
     return [{
         "id": assessment.id, "title": assessment.title,
         "description": assessment.description, "kind": assessment.kind,
+        "learning_technique": (assessment.settings or {}).get("learning_technique", "practice"),
         "question_count": counts.get(assessment.id, 0),
         "skills": skills_by_assessment.get(assessment.id, []),
     } for assessment in assessments]
@@ -710,6 +715,7 @@ async def get_attempt(
 
 
 async def assessment_attempt_payload(attempt: AssessmentAttempt, db: AsyncSession) -> dict:
+    assessment = await db.get(Assessment, attempt.assessment_id)
     items = (await db.execute(
         select(AssessmentQuestion, Question)
         .join(Question, Question.id == AssessmentQuestion.question_id)
@@ -726,6 +732,12 @@ async def assessment_attempt_payload(attempt: AssessmentAttempt, db: AsyncSessio
     return {
         "id": attempt.id, "assessment_id": attempt.assessment_id,
         "course_id": attempt.course_id,
+        "assessment": {
+            "title": assessment.title,
+            "description": assessment.description,
+            "instructions": (assessment.settings or {}).get("instructions", ""),
+            "kind": assessment.kind,
+        } if assessment else None,
         "status": attempt.status, "attempt_number": attempt.attempt_number,
         "score": attempt.score, "possible_score": attempt.possible_score,
         "submitted_at": attempt.submitted_at,
@@ -877,20 +889,22 @@ async def progress(
         select(StudentSkillMastery, Skill, Unit)
         .join(Skill, Skill.id == StudentSkillMastery.skill_id)
         .join(Unit, Unit.id == Skill.unit_id)
-        .where(StudentSkillMastery.student_id == student.id, Unit.course_id == course_id)
+        .where(StudentSkillMastery.student_id == student.id, Unit.course_id == course_id,
+               Skill.status == "published")
         .order_by(Unit.position, Skill.position)
     )).all()
     schedules = (await db.execute(select(ReviewSchedule).join(
         Skill, Skill.id == ReviewSchedule.skill_id
     ).join(Unit, Unit.id == Skill.unit_id).where(
         ReviewSchedule.student_id == student.id, Unit.course_id == course_id,
+        Skill.status == "published",
     ).order_by(ReviewSchedule.due_at))).scalars().all()
     evidence_history = (await db.execute(
         select(LearningEvidenceEvent, Skill, Unit)
         .join(Skill, Skill.id == LearningEvidenceEvent.skill_id)
         .join(Unit, Unit.id == Skill.unit_id)
         .where(LearningEvidenceEvent.student_id == student.id,
-               LearningEvidenceEvent.course_id == course_id)
+               LearningEvidenceEvent.course_id == course_id, Skill.status == "published")
         .order_by(LearningEvidenceEvent.created_at.desc()).limit(50)
     )).all()
     review_history = (await db.execute(
@@ -898,7 +912,7 @@ async def progress(
         .join(Skill, Skill.id == SpacedReviewEvent.skill_id)
         .join(Unit, Unit.id == Skill.unit_id)
         .where(SpacedReviewEvent.student_id == student.id,
-               SpacedReviewEvent.course_id == course_id)
+               SpacedReviewEvent.course_id == course_id, Skill.status == "published")
         .order_by(SpacedReviewEvent.created_at.desc()).limit(30)
     )).all()
     transfer_attempts = (await db.execute(
@@ -957,7 +971,7 @@ async def rate_review(
 ) -> dict:
     await enrolled_course(course_id, student, db)
     skill = await db.scalar(select(Skill).join(Unit).where(
-        Skill.id == skill_id, Unit.course_id == course_id,
+        Skill.id == skill_id, Unit.course_id == course_id, Skill.status == "published",
     ))
     if skill is None:
         raise HTTPException(status_code=404, detail="Skill not found")
@@ -1043,7 +1057,7 @@ async def create_tutor_session(
     await enrolled_course(course_id, student, db)
     if skill_id:
         skill = await db.scalar(select(Skill).join(Unit).where(
-            Skill.id == skill_id, Unit.course_id == course_id,
+            Skill.id == skill_id, Unit.course_id == course_id, Skill.status == "published",
         ))
         if skill is None:
             raise HTTPException(status_code=404, detail="Skill not found")
@@ -1117,7 +1131,9 @@ async def send_tutor_message(
         raise HTTPException(status_code=503, detail="The AI tutor is not configured")
     skill_name = ""
     if session.skill_id:
-        skill_name = await db.scalar(select(Skill.title).where(Skill.id == session.skill_id)) or ""
+        skill_name = await db.scalar(select(Skill.title).where(
+            Skill.id == session.skill_id, Skill.status == "published",
+        )) or ""
 
     user_message = TutorMessage(session_id=session_id, role="user", content=data.content)
     db.add(user_message)
@@ -1170,7 +1186,7 @@ async def request_tutor_hint(
     reference = ""
     if session.skill_id:
         row = (await db.execute(select(Skill.title, Skill.description).where(
-            Skill.id == session.skill_id,
+            Skill.id == session.skill_id, Skill.status == "published",
         ))).first()
         if row:
             skill_name, reference = row

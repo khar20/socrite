@@ -32,10 +32,9 @@ export type CurriculumUnit = {
   title: string
   outcome: string
   position: number
-  weeks: string
   hours: number
-  topics: { id: string; title: string; position: number }[]
-  skills: { id: string; title: string; description: string; position: number }[]
+  topics: { id: string; title: string; position: number; status: 'draft' | 'published'; source_refs: SourceRef[] }[]
+  skills: { id: string; title: string; description: string; position: number; status: 'draft' | 'published'; source_refs: SourceRef[] }[]
 }
 
 export type Material = {
@@ -101,6 +100,7 @@ export type AssessmentSettings = {
   review_required?: boolean
   attempts_before_solution?: number
   generated?: boolean
+  learning_technique?: 'assessment' | 'practice' | 'spaced_repetition' | 'transfer'
   generation?: {
     model?: string
     material_ids?: string[]
